@@ -2,23 +2,14 @@
 """
 refresh_holdings.py — Refresh ETF holdings by re-scraping fact sheets.
 
-This script uses web search + PDF extraction to get the latest holdings
-from Satrix and Sygnia fact sheets. It's designed to be run manually
-when holdings data needs updating (typically every 3-6 months).
+Since JSE ETF holdings aren't available via free API, this script documents
+the refresh process. Run it to check status, then ask the Hermes agent
+to perform the actual web scraping when needed.
 
 Usage:
-    python scripts/refresh_holdings.py           # Refresh all ETFs
-    python scripts/refresh_holdings.py --etf STXESG  # Refresh one ETF
-    python scripts/refresh_holdings.py --check    # Check if updates are available
-
-The script will:
-1. Search for the latest fact sheet for each ETF
-2. Extract holdings from the PDF/HTML
-3. Update etf_holdings_db.json
-4. Report what changed
-
-Note: This requires the hermes web_search and web_extract tools.
-For best results, run this through the Hermes agent rather than standalone.
+    python scripts/refresh_holdings.py --status   # Show DB status
+    python scripts/refresh_holdings.py --check    # Check if updates needed
+    python scripts/refresh_holdings.py --refresh  # Instructions for manual refresh
 """
 
 import json
@@ -33,44 +24,32 @@ DB_PATH = REPO_ROOT / "data" / "etf_holdings_db.json"
 ETF_CONFIG = {
     "STXESG": {
         "name": "Satrix MSCI World ESG Enhanced Feeder ETF",
-        "search_query": "Satrix MSCI World ESG Enhanced Feeder ETF STXESG top holdings 2026",
-        "benchmark": "MSCI World ESG Enhanced Focus CTB Index (ZAR)",
-        "isin": "ZAE000289963",
+        "search": "Satrix MSCI World ESG Enhanced Feeder ETF STXESG top holdings",
         "ter": 0.34,
     },
     "STXNDQ": {
         "name": "Satrix Nasdaq 100 ETF",
-        "search_query": "Satrix Nasdaq 100 ETF STXNDQ top holdings 2026",
-        "benchmark": "NASDAQ 100 Index",
-        "isin": "ZAE000209501",
+        "search": "Satrix Nasdaq 100 ETF STXNDQ top holdings",
         "ter": 0.45,
     },
     "SYG4IR": {
         "name": "Sygnia Itrix 4th Industrial Revolution Global Equity AMETF",
-        "search_query": "Sygnia 4th Industrial Revolution SYG4IR top holdings 2026",
-        "benchmark": "Solactive GBS United States 500 Index (ZAR)",
-        "isin": "ZAE000252433",
+        "search": "Sygnia 4th Industrial Revolution SYG4IR top holdings",
         "ter": 0.64,
     },
     "SYGEU": {
         "name": "Sygnia Itrix Euro Stoxx 50 ETF",
-        "search_query": "Sygnia Euro Stoxx 50 SYGEU top holdings 2026",
-        "benchmark": "Euro STOXX 50 Index",
-        "isin": "ZAE000249512",
+        "search": "Sygnia Euro Stoxx 50 SYGEU top holdings",
         "ter": 0.91,
     },
     "SYGUS": {
         "name": "Sygnia Itrix MSCI USA Index ETF",
-        "search_query": "Sygnia MSCI USA SYGUS top holdings 2026",
-        "benchmark": "MSCI USA Index",
-        "isin": "ZAE000249546",
+        "search": "Sygnia MSCI USA SYGUS top holdings",
         "ter": 0.89,
     },
     "SYGESG": {
         "name": "Sygnia Itrix S&P Global 1200 ESG ETF",
-        "search_query": "Sygnia S&P Global 1200 ESG SYGESG top holdings 2026",
-        "benchmark": "S&P Global 1200 Scored & Screened Index",
-        "isin": "ZAE000296778",
+        "search": "Sygnia S&P Global 1200 ESG SYGESG top holdings",
         "ter": 0.37,
     },
 }
@@ -83,15 +62,28 @@ def load_db() -> dict:
     return {}
 
 
-def save_db(db: dict) -> None:
-    db["_updated"] = datetime.now(timezone.utc).isoformat()
-    with open(DB_PATH, "w", encoding="utf-8") as f:
-        json.dump(db, f, indent=2, ensure_ascii=False)
-    print(f"✓ Saved to {DB_PATH}")
+def status(db: dict):
+    print("ETF Holdings Database Status")
+    print("=" * 60)
+    for ticker, config in ETF_CONFIG.items():
+        if ticker in db:
+            h_count = len(db[ticker].get("holdings", []))
+            refreshed = db[ticker].get("_last_refreshed", "never")
+            if refreshed and refreshed != "never":
+                try:
+                    dt = datetime.fromisoformat(refreshed.replace("Z", "+00:00"))
+                    age = (datetime.now(timezone.utc) - dt).days
+                    refreshed = f"{refreshed[:10]} ({age}d ago)"
+                except ValueError:
+                    pass
+            print(f"  {ticker:10s} {h_count:3d} holdings  refreshed: {refreshed}")
+        else:
+            print(f"  {ticker:10s} NOT IN DB")
+    print(f"\nDB: {DB_PATH}")
+    print(f"Updated: {db.get('_updated', 'unknown')}")
 
 
-def check_updates_needed(db: dict) -> list[str]:
-    """Check which ETFs might need updating based on last refresh date."""
+def check(db: dict) -> list[str]:
     needs_update = []
     for ticker in ETF_CONFIG:
         if ticker not in db:
@@ -100,10 +92,9 @@ def check_updates_needed(db: dict) -> list[str]:
         last = db[ticker].get("_last_refreshed", "")
         if last:
             try:
-                from datetime import datetime
-                last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-                age_days = (datetime.now(timezone.utc) - last_dt).days
-                if age_days > 90:
+                dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - dt).days
+                if age > 90:
                     needs_update.append(ticker)
             except ValueError:
                 needs_update.append(ticker)
@@ -112,84 +103,44 @@ def check_updates_needed(db: dict) -> list[str]:
     return needs_update
 
 
-def print_instructions():
-    """Print instructions for manual refresh via Hermes agent."""
-    print()
-    print("=" * 60)
-    print("MANUAL REFRESH INSTRUCTIONS")
-    print("=" * 60)
-    print()
-    print("Since this script can't call web_search/web_extract directly,")
-    print("the best way to refresh holdings is to ask the Hermes agent:")
-    print()
-    print('  "Refresh the ETF holdings database. Check for updated fact')
-    print('   sheets for STXESG, STXNDQ, SYG4IR, SYGEU, SYGUS, SYGESG')
-    print('   and update data/etf_holdings_db.json with the latest')
-    print('   top 10-20 holdings from each."')
-    print()
-    print("Or for a single ETF:")
-    print('  "What are the latest top holdings for SYGUS?"')
-    print()
-    print("The agent will search for the latest fact sheets and update")
-    print("the database automatically.")
-    print()
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Refresh ETF holdings database")
-    parser.add_argument("--etf", help="Refresh a single ETF ticker")
-    parser.add_argument("--all", action="store_true", help="Refresh all ETFs")
-    parser.add_argument("--check", action="store_true", help="Check if updates are needed")
-    parser.add_argument("--status", action="store_true", help="Show current DB status")
+    parser = argparse.ArgumentParser(description="ETF Holdings DB maintenance")
+    parser.add_argument("--status", action="store_true", help="Show DB status")
+    parser.add_argument("--check", action="store_true", help="Check if updates needed")
+    parser.add_argument("--refresh", action="store_true", help="Show refresh instructions")
     args = parser.parse_args()
 
     db = load_db()
 
-    if args.status:
-        print("ETF Holdings Database Status")
-        print("=" * 50)
-        for ticker, config in ETF_CONFIG.items():
-            if ticker in db:
-                h_count = len(db[ticker].get("holdings", []))
-                refreshed = db[ticker].get("_last_refreshed", "never")
-                print(f"  {ticker:10s} {h_count:3d} holdings  last: {refreshed[:10]}")
-            else:
-                print(f"  {ticker:10s} NOT IN DB")
-        print()
-        print(f"Database: {DB_PATH}")
-        print(f"Updated:  {db.get('_updated', 'unknown')}")
-        return
+    if args.status or (not args.check and not args.refresh):
+        status(db)
 
     if args.check:
-        needs_update = check_updates_needed(db)
-        if needs_update:
-            print(f"The following ETFs may need updating:")
-            for t in needs_update:
+        needs = check(db)
+        if needs:
+            print("Needs refresh (>90 days or missing):")
+            for t in needs:
                 last = db.get(t, {}).get("_last_refreshed", "never")
-                print(f"  {t}: last refreshed {last}")
+                print(f"  {t}: {last}")
         else:
-            print("All ETFs appear up to date (refreshed within 90 days).")
-        return
+            print("All ETFs up to date (refreshed within 90 days).")
 
-    if args.all or args.etf:
-        print("This script requires web_search and web_extract tools.")
-        print("Please ask the Hermes agent to perform the refresh.")
+    if args.refresh:
         print()
-        if args.etf:
-            ticker = args.etf.upper()
-            query = ETF_CONFIG.get(ticker, {}).get("search_query", ticker)
-            print(f'Say: "Search for the latest {ticker} fact sheet and')
-            print(f' extract the top holdings. Update the ETF database."')
-        else:
-            print('Say: "Refresh all ETF holdings in the database."')
+        print("=" * 60)
+        print("REFRESH INSTRUCTIONS")
+        print("=" * 60)
         print()
-        print_instructions()
-        return
-
-    # Default: show status + help
-    parser.print_help()
-    print()
-    print_instructions()
+        print("Ask the Hermes agent to refresh holdings:")
+        print()
+        print('  "Refresh the ETF holdings database. Search for the latest')
+        print('   fact sheets for STXESG, STXNDQ, SYG4IR, SYGEU, SYGUS,')
+        print('   SYGESG and update data/etf_holdings_db.json with the')
+        print('   latest top holdings from each."')
+        print()
+        print("The agent will use web search + PDF extraction to get")
+        print("the latest data, same as the initial research.")
+        print()
 
 
 if __name__ == "__main__":
