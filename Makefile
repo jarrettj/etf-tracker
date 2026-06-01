@@ -80,10 +80,21 @@ lint-frontend: ## Lint TypeScript frontend
 # ── Testing ──────────────────────────────────────────────────────────────────
 test: test-backend test-frontend ## Run all tests
 
-test-backend: ## Run backend pytest suite
-	@echo "==> Running backend tests..."
+test-backend: ## Run backend pytest suite (unit tests, no server needed)
+	@echo "==> Running backend unit tests..."
 	.venv/bin/pip install -q -r requirements-dev.txt
-	.venv/bin/pytest tests/ -v
+	.venv/bin/pytest tests/test_api.py -v
+
+test-smoke: ## Run smoke tests against the LIVE server on port 8002
+	@echo "==> Running smoke tests against $(BACKEND_PORT)..."
+	.venv/bin/pytest tests/test_smoke.py -v
+
+refresh-holdings: ## Refresh ETF holdings data (agent-driven, asks Hermes to scrape)
+	@echo "==> Refreshing ETF holdings..."
+	.venv/bin/python scripts/refresh_holdings.py --status
+	@echo ""
+	@echo "To refresh data, ask Hermes to scrape the latest fund fact sheets."
+	@echo "Hermes will use web_extract to pull holdings and update the DB."
 
 test-frontend: ## Run frontend vitest suite
 	@echo "==> Running frontend tests..."

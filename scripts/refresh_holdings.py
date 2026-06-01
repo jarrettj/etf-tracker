@@ -1,55 +1,55 @@
 #!/usr/bin/env python3
 """
-refresh_holdings.py — Refresh ETF holdings by re-scraping fact sheets.
+refresh_holdings.py — ETF holdings refresh Helper.
 
-Since JSE ETF holdings aren't available via free API, this script documents
-the refresh process. Run it to check status, then ask the Hermes agent
-to perform the actual web scraping when needed.
+Two modes:
+  1. Agent-driven (recommended): Ask Hermes to scrape & refresh.
+     The agent uses web_extract to pull holdings from JS-rendered pages,
+     then runs this script with --update to write results.
+  2. Self-serve --status: Show DB status (dates, sources, counts).
 
 Usage:
-    python scripts/refresh_holdings.py --status   # Show DB status
-    python scripts/refresh_holdings.py --check    # Check if updates needed
-    python scripts/refresh_holdings.py --refresh  # Instructions for manual refresh
+    --status                  Show DB status
+    --update TICKER JSON      Update one ETF from scraped JSON data
+    --check                   List ETFs needing refresh (>90 days)
 """
 
-import json
-import sys
-import argparse
+import json, sys, argparse
 from pathlib import Path
 from datetime import datetime, timezone
 
 REPO_ROOT = Path(__file__).parent.parent
 DB_PATH = REPO_ROOT / "data" / "etf_holdings_db.json"
 
-ETF_CONFIG = {
+ETF_SOURCES = {
     "STXESG": {
         "name": "Satrix MSCI World ESG Enhanced Feeder ETF",
-        "search": "Satrix MSCI World ESG Enhanced Feeder ETF STXESG top holdings",
+        "url": "https://satrix.co.za/fund/mdd/STXESG",
         "ter": 0.34,
     },
     "STXNDQ": {
         "name": "Satrix Nasdaq 100 ETF",
-        "search": "Satrix Nasdaq 100 ETF STXNDQ top holdings",
+        "url": "https://satrix.co.za/fund/mdd/STXNDQ",
         "ter": 0.45,
     },
     "SYG4IR": {
         "name": "Sygnia Itrix 4th Industrial Revolution Global Equity AMETF",
-        "search": "Sygnia 4th Industrial Revolution SYG4IR top holdings",
+        "url": "https://www.sygnia.co.za/fund/sygnia-4th-industrial-revolution-global-equity-fund-class-a",
         "ter": 0.64,
     },
     "SYGEU": {
         "name": "Sygnia Itrix Euro Stoxx 50 ETF",
-        "search": "Sygnia Euro Stoxx 50 SYGEU top holdings",
+        "url": "https://www.sygnia.co.za/fund/sygnia-itrix-euro-stoxx-50-etf",
         "ter": 0.91,
     },
     "SYGUS": {
         "name": "Sygnia Itrix MSCI USA Index ETF",
-        "search": "Sygnia MSCI USA SYGUS top holdings",
+        "url": "https://www.sygnia.co.za/fund/sygnia-itrix-msci-usa-index-etf",
         "ter": 0.89,
     },
     "SYGESG": {
         "name": "Sygnia Itrix S&P Global 1200 ESG ETF",
-        "search": "Sygnia S&P Global 1200 ESG SYGESG top holdings",
+        "url": "https://www.sygnia.co.za/fund/sygnia-itrix-s-p-global-1200-esg-etf",
         "ter": 0.37,
     },
 }
@@ -62,85 +62,113 @@ def load_db() -> dict:
     return {}
 
 
-def status(db: dict):
+def save_db(db: dict) -> None:
+    db["_updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with open(DB_PATH, "w", encoding="utf-8") as f:
+        json.dump(db, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def status(db: dict) -> None:
     print("ETF Holdings Database Status")
-    print("=" * 60)
-    for ticker, config in ETF_CONFIG.items():
+    print("=" * 65)
+    now = datetime.now(timezone.utc)
+    for ticker, src in ETF_SOURCES.items():
         if ticker in db:
             h_count = len(db[ticker].get("holdings", []))
             refreshed = db[ticker].get("_last_refreshed", "never")
+            url = db[ticker].get("_source_url", "—")
             if refreshed and refreshed != "never":
                 try:
-                    dt = datetime.fromisoformat(refreshed.replace("Z", "+00:00"))
-                    age = (datetime.now(timezone.utc) - dt).days
+                    dt = datetime.strptime(refreshed[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                    age = (now - dt).days
                     refreshed = f"{refreshed[:10]} ({age}d ago)"
                 except ValueError:
                     pass
             print(f"  {ticker:10s} {h_count:3d} holdings  refreshed: {refreshed}")
+            print(f"             source: {url[:75]}")
         else:
             print(f"  {ticker:10s} NOT IN DB")
     print(f"\nDB: {DB_PATH}")
-    print(f"Updated: {db.get('_updated', 'unknown')}")
+    print(f"_updated: {db.get('_updated', 'unknown')}")
+    print(f"_source:  {db.get('_source', 'unknown')}")
 
 
-def check(db: dict) -> list[str]:
-    needs_update = []
-    for ticker in ETF_CONFIG:
+def check(db: dict) -> list:
+    needs = []
+    now = datetime.now(timezone.utc)
+    for ticker in ETF_SOURCES:
         if ticker not in db:
-            needs_update.append(ticker)
+            needs.append((ticker, "missing"))
             continue
         last = db[ticker].get("_last_refreshed", "")
         if last:
             try:
-                dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-                age = (datetime.now(timezone.utc) - dt).days
+                dt = datetime.strptime(last[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                age = (now - dt).days
                 if age > 90:
-                    needs_update.append(ticker)
+                    needs.append((ticker, f"{age}d old"))
             except ValueError:
-                needs_update.append(ticker)
+                needs.append((ticker, "bad date"))
         else:
-            needs_update.append(ticker)
-    return needs_update
+            needs.append((ticker, "never"))
+    return needs
+
+
+def update_etf(db: dict, ticker: str, holdings: list) -> None:
+    """Update a single ETF's holdings from scraped data."""
+    src = ETF_SOURCES[ticker]
+    refresh_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    existing = db.get(ticker, {})
+    db[ticker] = {
+        **existing,
+        "name": src["name"],
+        "benchmark": existing.get("benchmark", ""),
+        "ter": src["ter"],
+        "holdings": holdings,
+        "_source_url": src["url"],
+        "_last_refreshed": refresh_date,
+    }
+    print(f"  Updated {ticker}: {len(holdings)} holdings, _last_refreshed={refresh_date}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="ETF Holdings DB maintenance")
     parser.add_argument("--status", action="store_true", help="Show DB status")
-    parser.add_argument("--check", action="store_true", help="Check if updates needed")
-    parser.add_argument("--refresh", action="store_true", help="Show refresh instructions")
+    parser.add_argument("--check", action="store_true", help="List ETFs needing refresh")
+    parser.add_argument("--update", nargs=2, metavar=("TICKER", "JSON"),
+                        help="Update ETF from scraped JSON string")
     args = parser.parse_args()
-
     db = load_db()
 
-    if args.status or (not args.check and not args.refresh):
+    if args.status or (not args.update and not args.check):
         status(db)
+        return
 
     if args.check:
         needs = check(db)
         if needs:
-            print("Needs refresh (>90 days or missing):")
-            for t in needs:
-                last = db.get(t, {}).get("_last_refreshed", "never")
-                print(f"  {t}: {last}")
+            print("ETFs needing refresh:")
+            for ticker, reason in needs:
+                last = db.get(ticker, {}).get("_last_refreshed", "never")
+                print(f"  {ticker:10s}  {reason:10s}  (last: {last})")
         else:
             print("All ETFs up to date (refreshed within 90 days).")
+        return
 
-    if args.refresh:
-        print()
-        print("=" * 60)
-        print("REFRESH INSTRUCTIONS")
-        print("=" * 60)
-        print()
-        print("Ask the Hermes agent to refresh holdings:")
-        print()
-        print('  "Refresh the ETF holdings database. Search for the latest')
-        print('   fact sheets for STXESG, STXNDQ, SYG4IR, SYGEU, SYGUS,')
-        print('   SYGESG and update data/etf_holdings_db.json with the')
-        print('   latest top holdings from each."')
-        print()
-        print("The agent will use web search + PDF extraction to get")
-        print("the latest data, same as the initial research.")
-        print()
+    if args.update:
+        ticker = args.update[0].upper().strip()
+        if ticker not in ETF_SOURCES:
+            print(f"Unknown ETF: {ticker}")
+            sys.exit(1)
+        try:
+            holdings = json.loads(args.update[1])
+        except json.JSONDecodeError as e:
+            print(f"Invalid JSON: {e}")
+            sys.exit(1)
+        update_etf(db, ticker, holdings)
+        save_db(db)
+        print(f"Database saved to {DB_PATH}")
 
 
 if __name__ == "__main__":
