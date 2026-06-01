@@ -351,6 +351,12 @@ function EtfList() {
   const [etfs, setEtfs] = React.useState([]);
   const [error, setError] = React.useState(null);
   const [selected, setSelected] = React.useState(null);
+  const [addingTicker, setAddingTicker] = React.useState(null);
+  const [addShares, setAddShares] = React.useState('');
+  const [addCost, setAddCost] = React.useState('');
+  const [adding, setAdding] = React.useState(false);
+  const [addError, setAddError] = React.useState(null);
+  const [addedTickers, setAddedTickers] = React.useState(new Set());
 
   React.useEffect(() => {
     fetch(`${API}/api/etf`)
@@ -366,6 +372,49 @@ function EtfList() {
     setSelected(await res.json());
   };
 
+  const startAdd = (ev, ticker) => {
+    ev.stopPropagation();
+    setAddingTicker(ticker);
+    setAddShares('');
+    setAddCost('');
+    setAddError(null);
+  };
+
+  const cancelAdd = (ev) => {
+    ev.stopPropagation();
+    setAddingTicker(null);
+  };
+
+  const confirmAdd = async (ev, ticker) => {
+    ev.stopPropagation();
+    const shares = parseFloat(addShares);
+    if (!shares || shares <= 0) {
+      setAddError('Enter a valid number of shares');
+      return;
+    }
+    setAdding(true);
+    setAddError(null);
+    try {
+      const res = await fetch(`${API}/api/portfolio/positions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          etf_ticker: ticker,
+          shares: shares,
+          cost_basis_per_share: parseFloat(addCost) || 0,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setAddedTickers(prev => new Set(prev).add(ticker));
+      setAddingTicker(null);
+      setTimeout(() => setAddedTickers(prev => { const n = new Set(prev); n.delete(ticker); return n; }), 2000);
+    } catch (err) {
+      setAddError(err.message);
+    } finally {
+      setAdding(false);
+    }
+  };
+
   return (
     <div>
       <h2>ETFs</h2>
@@ -374,7 +423,7 @@ function EtfList() {
       ) : (
         <table className="data-table">
           <thead>
-            <tr><th>Ticker</th><th>Name</th><th>Benchmark</th><th>TER</th><th>Holdings</th><th></th></tr>
+            <tr><th>Ticker</th><th>Name</th><th>Benchmark</th><th>TER</th><th>Holdings</th><th style={{ width: 140 }}>Action</th></tr>
           </thead>
           <tbody>
             {etfs.map((e) => (
@@ -386,9 +435,21 @@ function EtfList() {
                   <td>{e.ter}%</td>
                   <td>{e.holding_count}</td>
                   <td>
-                    <button className="btn-primary btn-sm" onClick={(ev) => { ev.stopPropagation(); }}>
-                      {e.holding_count > 0 ? '✓ Data' : 'Needs data'}
-                    </button>
+                    {addingTicker === e.ticker ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }} onClick={(ev) => ev.stopPropagation()}>
+                        <input type="number" step="any" value={addShares} onChange={(ev) => setAddShares(ev.target.value)} placeholder="Shares" style={{ width: 80, padding: '2px 6px', fontSize: 11, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)' }} />
+                        <input type="number" step="any" value={addCost} onChange={(ev) => setAddCost(ev.target.value)} placeholder="Cost/share" style={{ width: 80, padding: '2px 6px', fontSize: 11, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)' }} />
+                        {addError && <span style={{ color: 'var(--red)', fontSize: 10 }}>{addError}</span>}
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button className="btn-primary btn-sm" disabled={adding} onClick={(ev) => confirmAdd(ev, e.ticker)}>{adding ? '...' : 'Add'}</button>
+                          <button className="btn-danger btn-sm" onClick={(ev) => cancelAdd(ev)}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button className="btn-primary btn-sm" onClick={(ev) => startAdd(ev, e.ticker)}>
+                        {addedTickers.has(e.ticker) ? '✓ Added' : '+ Portfolio'}
+                      </button>
+                    )}
                   </td>
                 </tr>
                 {selected?.ticker === e.ticker && (
@@ -408,13 +469,13 @@ function EtfList() {
 // ── EtfDetail ───────────────────────────────────────────────────────────────
 function EtfDetail({ etf }) {
   return (
-    <div style={{ padding: 16, background: 'var(--bg-secondary)' }}>
+    <div style={{ padding: 16, background: 'var(--bg-card)', borderTop: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <h4>{etf.name}</h4>
         {etf.current_price && <span className="summary-value" style={{ fontSize: 16 }}>{formatZAR(etf.current_price)}</span>}
       </div>
       <div style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 12 }}>
-        Benchmark: {etf.benchmark} · TER: {etf.ter}%
+        Benchmark: {etf.benchmark} · TER: {etf.ter}% · {etf.holding_count || etf.holdings?.length || 0} holdings
       </div>
       {etf.holdings?.length > 0 ? (
         <table className="data-table">
