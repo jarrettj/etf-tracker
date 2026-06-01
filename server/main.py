@@ -164,12 +164,16 @@ def get_price(ticker: str) -> dict | None:
     import time
 
     ticker = ticker.upper()
+    yf_ticker = ticker if "." in ticker else f"{ticker}.JO"
     now = time.time()
 
     # ── Fast path: fresh cache ──────────────────────────────────────────────
     fresh = _load_price_cache(max_age=_PRICE_CACHE_TTL)
     if ticker in fresh:
-        return {"price": fresh[ticker]["price"], "currency": fresh[ticker].get("currency", "ZAR"), "stale": False}
+        p = fresh[ticker]["price"]
+        if ".JO" in yf_ticker:
+            p = p / 100.0
+        return {"price": round(p, 2), "currency": fresh[ticker].get("currency", "ZAR"), "stale": False}
 
     # ── Medium path: stale cache exists, try refresh but keep fallback ───────
     stale = _load_price_cache(max_age=_PRICE_CACHE_STALE_TTL)
@@ -177,18 +181,21 @@ def get_price(ticker: str) -> dict | None:
     stale_price = stale_entry.get("price") if stale_entry else None
     stale_currency = stale_entry.get("currency", "ZAR") if stale_entry else "ZAR"
 
-    yf_ticker = ticker if "." in ticker else f"{ticker}.JO"
     fetched = _fetch_price_yfinance(ticker, yf_ticker)
 
     if fetched:
         currency = "ZAR" if ".JO" in yf_ticker else "USD"
+        stored_price = fetched
+        # Cache always stores cents for JSO tickers to stay consistent
         full_cache = _load_price_cache(max_age=float("inf"))
-        full_cache[ticker] = {"price": fetched, "currency": currency}
+        full_cache[ticker] = {"price": stored_price, "currency": currency}
         _save_price_cache(full_cache)
-        return {"price": fetched, "currency": currency, "stale": False}
+        display_price = fetched / 100.0 if ".JO" in yf_ticker else fetched
+        return {"price": round(display_price, 2), "currency": currency, "stale": False}
 
     if stale_price is not None:
-        return {"price": stale_price, "currency": stale_currency, "stale": True}
+        display_price = stale_price / 100.0 if ".JO" in yf_ticker else stale_price
+        return {"price": round(display_price, 2), "currency": stale_currency, "stale": True}
 
     return None
 
