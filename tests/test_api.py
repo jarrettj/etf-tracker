@@ -549,7 +549,7 @@ class TestErrorHandling:
     def test_invalid_json_body(self, client):
         resp = client.post(
             "/api/portfolio/positions",
-            data="not json",
+            content=b"not json",
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 422
