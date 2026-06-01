@@ -24,7 +24,14 @@ _HOLDINGS_DB_PATH = Path(__file__).parent.parent / "data" / "etf_holdings_db.jso
 _holdings_cache: dict | None = None
 
 if _FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
+    app.mount("/_app", StaticFiles(directory=str(_FRONTEND_DIST / "_app")), name="svelte-app")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        svg = _FRONTEND_DIST / "favicon.svg"
+        if svg.exists():
+            return HTMLResponse(content=svg.read_text(), media_type="image/svg+xml")
+        raise HTTPException(404)
 
 
 def _load_holdings_db() -> dict:

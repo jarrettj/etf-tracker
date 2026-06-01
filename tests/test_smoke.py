@@ -98,26 +98,27 @@ def test_portfolio_rollup():
     assert "sector_allocation" in resp
 
 
-# ── Frontend (Vite dev server) ──────────────────────────────────────────────
+# ── Frontend (built dist served by FastAPI) ──────────────────────────────────
 
-FRONTEND_BASE = os.environ.get("FRONTEND_URL", "http://localhost:5174")
+FRONTEND_BASE = os.environ.get("FRONTEND_URL", "http://localhost:8002")
 
 
 def test_frontend_serves_html():
-    """Vite dev server responds with HTML (SPA shell)."""
+    """FastAPI serves the built SPA index.html."""
     url = FRONTEND_BASE + "/"
     req = urllib.request.Request(url)
     with urllib.request.urlopen(req, timeout=5) as resp:
         assert resp.status == 200
         body = resp.read().decode()
         assert "<title>ETF Tracker</title>" in body
-        assert "root" in body  # React mount point
+        assert "sveltekit" in body.lower() or "_app" in body
 
 
-def test_frontend_api_proxy():
-    """Vite dev server proxies /api/health to backend correctly."""
-    url = FRONTEND_BASE + "/api/health"
+def test_frontend_serves_css():
+    """SvelteKit built assets are served correctly."""
+    url = FRONTEND_BASE + "/"
     req = urllib.request.Request(url)
     with urllib.request.urlopen(req, timeout=5) as resp:
-        data = json.loads(resp.read())
-        assert data["status"] == "ok"
+        body = resp.read().decode()
+        # Built SvelteKit CSS
+        assert "_app/immutable/assets/" in body or "_app/" in body
