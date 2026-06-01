@@ -99,18 +99,22 @@ def _save_portfolio(data: dict) -> None:
 
 
 _PRICE_CACHE_PATH = Path.home() / ".tradingagents" / "etf_prices_cache.json"
-_PRICE_CACHE_TTL = 300
+_PRICE_CACHE_TTL = 3600          # 1 hour — prices don't change minute-to-minute
+_PRICE_CACHE_STALE_TTL = 86400   # 24 hours — use stale prices rather than fail
+_YFINANCE_TIMEOUT = 8            # seconds — yfinance must answer within this window
 
 
-def _load_price_cache() -> dict:
+def _load_price_cache(max_age: float | None = None) -> dict:
     import time
     if not _PRICE_CACHE_PATH.exists():
         return {}
     try:
         data = json.loads(_PRICE_CACHE_PATH.read_text(encoding="utf-8"))
-        if time.time() - data.get("_cached_at", 0) > _PRICE_CACHE_TTL:
+        age = time.time() - data.get("_cached_at", 0)
+        if max_age is not None and age > max_age:
             return {}
-        return data
+        # Strip metadata before returning
+        return {k: v for k, v in data.items() if not k.startswith("_")}
     except (json.JSONDecodeError, OSError):
         return {}
 
@@ -122,22 +126,70 @@ def _save_price_cache(data: dict) -> None:
     _PRICE_CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
-def get_price(ticker: str) -> float | None:
-    cache = _load_price_cache()
-    if ticker.upper() in cache:
-        return cache[ticker.upper()].get("price")
-    try:
-        import yfinance as yf
-        yf_ticker = ticker if "." in ticker else f"{ticker}.JO"
-        info = yf.Ticker(yf_ticker).info
-        price = info.get("regularMarketPrice") or info.get("previousClose") or info.get("navPrice")
-        if price:
-            currency = "ZAR" if ".JO" in yf_ticker else "USD"
-            cache[ticker.upper()] = {"price": price, "currency": currency}
-            _save_price_cache(cache)
-            return price
-    except Exception:
-        pass
+def _fetch_price_yfinance(ticker: str, yf_ticker: str) -> float | None:
+    """Fetch a single price from yfinance with a hard timeout.
+
+    Runs the blocking yfinance call in a thread and waits at most
+    _YFINANCE_TIMEOUT seconds.  Returns None on timeout or error.
+    """
+    import concurrent.futures, yfinance as yf
+
+    def _do() -> float | None:
+        try:
+            info = yf.Ticker(yf_ticker).info
+            return (
+                info.get("regularMarketPrice")
+                or info.get("previousClose")
+                or info.get("navPrice")
+            )
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_do)
+        try:
+            return future.result(timeout=_YFINANCE_TIMEOUT)
+        except (concurrent.futures.TimeoutError, Exception):
+            return None
+
+
+def get_price(ticker: str) -> dict | None:
+    """Return ``{"price": float, "currency": str, "stale": bool}`` or ``None``.
+
+    1. If a fresh cache entry exists (< ``_PRICE_CACHE_TTL``), use it.
+    2. If a stale cache entry exists (< ``_PRICE_CACHE_STALE_TTL``), try to
+       refresh from yfinance but **always** fall back to the stale price.
+    3. If no cache at all, try yfinance directly; return None on failure.
+    """
+    import time
+
+    ticker = ticker.upper()
+    now = time.time()
+
+    # ── Fast path: fresh cache ──────────────────────────────────────────────
+    fresh = _load_price_cache(max_age=_PRICE_CACHE_TTL)
+    if ticker in fresh:
+        return {"price": fresh[ticker]["price"], "currency": fresh[ticker].get("currency", "ZAR"), "stale": False}
+
+    # ── Medium path: stale cache exists, try refresh but keep fallback ───────
+    stale = _load_price_cache(max_age=_PRICE_CACHE_STALE_TTL)
+    stale_entry = stale.get(ticker)
+    stale_price = stale_entry.get("price") if stale_entry else None
+    stale_currency = stale_entry.get("currency", "ZAR") if stale_entry else "ZAR"
+
+    yf_ticker = ticker if "." in ticker else f"{ticker}.JO"
+    fetched = _fetch_price_yfinance(ticker, yf_ticker)
+
+    if fetched:
+        currency = "ZAR" if ".JO" in yf_ticker else "USD"
+        full_cache = _load_price_cache(max_age=float("inf"))
+        full_cache[ticker] = {"price": fetched, "currency": currency}
+        _save_price_cache(full_cache)
+        return {"price": fetched, "currency": currency, "stale": False}
+
+    if stale_price is not None:
+        return {"price": stale_price, "currency": stale_currency, "stale": True}
+
     return None
 
 
@@ -178,12 +230,14 @@ def etf_detail(ticker: str):
     if not info:
         raise HTTPException(status_code=404, detail=f"ETF {ticker} not found")
     price = get_price(ticker)
+    price_val = price["price"] if price else None
     return {
         "ticker": ticker.upper(),
         "name": info.get("name"),
         "benchmark": info.get("benchmark"),
         "ter": info.get("ter"),
-        "current_price": price,
+        "current_price": price_val,
+        "price_stale": price.get("stale", False) if price else None,
         "holdings": info.get("holdings", []),
         "holding_count": info.get("holding_count"),
         "last_refreshed": info.get("_last_refreshed"),
@@ -217,9 +271,10 @@ def portfolio_summary():
     total_value = 0.0
     total_cost = 0.0
     for pos in data["positions"]:
-        price = get_price(pos["etf_ticker"])
+        p = get_price(pos["etf_ticker"])
+        price_val = p["price"] if p else None
         etf_info = get_etf_info(pos["etf_ticker"])
-        value = pos["shares"] * (price or 0)
+        value = pos["shares"] * (price_val or 0)
         cost = pos["shares"] * pos["cost_basis_per_share"]
         pnl = value - cost
         total_value += value
@@ -229,7 +284,8 @@ def portfolio_summary():
             "etf_name": etf_info.get("name", pos["etf_ticker"]) if etf_info else pos["etf_ticker"],
             "shares": pos["shares"],
             "cost_basis_per_share": pos["cost_basis_per_share"],
-            "last_price": price,
+            "last_price": price_val,
+            "price_stale": p.get("stale", False) if p else None,
             "value_zar": round(value, 2),
             "cost_zar": round(cost, 2),
             "pnl_zar": round(pnl, 2),
@@ -285,12 +341,12 @@ def portfolio_rollup():
     data = _load_portfolio()
     holdings_map = {}
     sector_map = defaultdict(float)
-    total_value = sum(p["shares"] * (get_price(p["etf_ticker"]) or 0) for p in data["positions"])
+    total_value = sum(p["shares"] * (get_price(p["etf_ticker"]) or {}).get("price", 0) for p in data["positions"])
     for pos in data["positions"]:
         etf_info = get_etf_info(pos["etf_ticker"])
         if not etf_info:
             continue
-        etf_value = pos["shares"] * (get_price(pos["etf_ticker"]) or 0)
+        etf_value = pos["shares"] * (get_price(pos["etf_ticker"]) or {}).get("price", 0)
         etf_weight = etf_value / total_value if total_value > 0 else 0
         for h in etf_info.get("holdings", []):
             t = h["ticker"]
