@@ -10,3 +10,10 @@ node_modules/
 dist/
 *.egg-info/
 .DS_Store
+frontend/.vite/
+frontend/package-lock.json
+frontend/dist/
+.pytest_cache/
+.coverage
+htmlcov/
+*.pyo
