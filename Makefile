@@ -8,7 +8,7 @@ BACKEND_VENV   := .venv
 BACKEND_PYTHON := $(BACKEND_VENV)/bin/python
 BACKEND_PORT   := 8002
 FRONTEND_DIR   := frontend
-FRONTEND_PORT  := 5174
+FRONTEND_PORT  := 5175
 
 BACKEND_PID    := .backend.pid
 FRONTEND_PID   := .frontend.pid

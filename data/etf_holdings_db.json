@@ -29,7 +29,7 @@
       {"ticker": "LLY", "name": "Eli Lilly", "weight": 0.88, "sector": "Health Care"}
     ],
     "_last_refreshed": "2026-06-01",
-    "_page_hash": null
+    "_page_hash": "7432b79a4a0669a89e094f69372fa9f3"
   },
   "STXNDQ": {
     "name": "Satrix Nasdaq 100 ETF",
@@ -49,7 +49,7 @@
       {"ticker": "WMT", "name": "Walmart Inc", "weight": 3.15, "sector": "Consumer Staples"}
     ],
     "_last_refreshed": "2026-06-01",
-    "_page_hash": null
+    "_page_hash": "42074bdd345d23761c86f7fad2ed13bb"
   },
   "SYG4IR": {
     "name": "Sygnia Itrix 4th Industrial Revolution Global Equity AMETF",
@@ -57,19 +57,19 @@
     "ter": 0.64,
     "holdings_count": 10,
     "holdings": [
-      {"ticker": "MSFT", "name": "Microsoft Ord Shs", "weight": 8.2, "sector": "Information Technology"},
-      {"ticker": "NVDA", "name": "NVIDIA Ord Shs", "weight": 7.6, "sector": "Information Technology"},
-      {"ticker": "AAPL", "name": "Apple Ord Shs", "weight": 6.4, "sector": "Information Technology"},
-      {"ticker": "GOOG", "name": "Alphabet Ord Shs Class C", "weight": 5.9, "sector": "Communication Services"},
-      {"ticker": "AMZN", "name": "Amazon Com Ord Shs", "weight": 5.7, "sector": "Consumer Discretionary"},
-      {"ticker": "META", "name": "Meta Platforms Ord Shs Class A", "weight": 4.6, "sector": "Communication Services"},
-      {"ticker": "AVGO", "name": "Broadcom Ord Shs", "weight": 3.8, "sector": "Information Technology"},
-      {"ticker": "TSLA", "name": "Tesla Ord Shs", "weight": 2.2, "sector": "Consumer Discretionary"},
-      {"ticker": "TSM", "name": "Taiwan Semiconductor Manufacturing ADR", "weight": 2.1, "sector": "Information Technology"},
-      {"ticker": "ASML", "name": "ASML Holding ADR", "weight": 2.0, "sector": "Information Technology"}
+      {"ticker": "NVDA", "name": "NVIDIA Ord Shs", "weight": 7.9, "sector": "Information Technology"},
+      {"ticker": "GOOG", "name": "Alphabet Ord Shs Class C", "weight": 7.6, "sector": "Communication Services"},
+      {"ticker": "MSFT", "name": "Microsoft Ord Shs", "weight": 7.5, "sector": "Information Technology"},
+      {"ticker": "AAPL", "name": "Apple Ord Shs", "weight": 7.3, "sector": "Information Technology"},
+      {"ticker": "AMZN", "name": "Amazon Com Ord Shs", "weight": 5.8, "sector": "Consumer Discretionary"},
+      {"ticker": "AVGO", "name": "Broadcom Ord Shs", "weight": 4.5, "sector": "Information Technology"},
+      {"ticker": "META", "name": "Meta Platforms Ord Shs Class A", "weight": 3.7, "sector": "Communication Services"},
+      {"ticker": "TSLA", "name": "Tesla Ord Shs", "weight": 3.1, "sector": "Consumer Discretionary"},
+      {"ticker": "TSM", "name": "Taiwan Semiconductor Manufacturing ADR", "weight": 2.9, "sector": "Information Technology"},
+      {"ticker": "V", "name": "Visa Ord Shs Class A", "weight": 1.4, "sector": "Financials"}
     ],
     "_last_refreshed": "2026-06-01",
-    "_page_hash": null
+    "_page_hash": "914c3f57ea73d30c7d9ed2fd286c9740"
   },
   "SYGEU": {
     "name": "Sygnia Itrix Euro Stoxx 50 ETF",
@@ -89,7 +89,7 @@
       {"ticker": "DTE", "name": "Deutsche Telekom N Ord Shs", "weight": 2.8, "sector": "Communication Services"}
     ],
     "_last_refreshed": "2026-06-01",
-    "_page_hash": null
+    "_page_hash": "c5959c53d97d293589db4462cdb42bf1"
   },
   "SYGUS": {
     "name": "Sygnia Itrix MSCI USA Index ETF",
@@ -97,19 +97,19 @@
     "ter": 0.89,
     "holdings_count": 10,
     "holdings": [
-      {"ticker": "AAPL", "name": "Apple Ord Shs", "weight": 7.1, "sector": "Information Technology"},
-      {"ticker": "MSFT", "name": "Microsoft Ord Shs", "weight": 6.3, "sector": "Information Technology"},
-      {"ticker": "AMZN", "name": "Amazon Com Ord Shs", "weight": 3.3, "sector": "Consumer Discretionary"},
-      {"ticker": "NVDA", "name": "NVIDIA Ord Shs", "weight": 2.9, "sector": "Information Technology"},
-      {"ticker": "GOOGL", "name": "Alphabet Class A", "weight": 2.0, "sector": "Communication Services"},
-      {"ticker": "META", "name": "Meta Platforms Class A", "weight": 1.9, "sector": "Communication Services"},
-      {"ticker": "GOOG", "name": "Alphabet Class C", "weight": 1.7, "sector": "Communication Services"},
-      {"ticker": "TSLA", "name": "Tesla Ord Shs", "weight": 1.7, "sector": "Consumer Discretionary"},
-      {"ticker": "JPM", "name": "JPMorgan Chase Ord Shs", "weight": 1.2, "sector": "Financials"},
-      {"ticker": "AVGO", "name": "Broadcom Ord Shs", "weight": 1.2, "sector": "Information Technology"}
+      {"ticker": "NVDA", "name": "NVIDIA Ord Shs", "weight": 7.5, "sector": "Information Technology"},
+      {"ticker": "AAPL", "name": "Apple Ord Shs", "weight": 6.6, "sector": "Information Technology"},
+      {"ticker": "MSFT", "name": "Microsoft Ord Shs", "weight": 4.6, "sector": "Information Technology"},
+      {"ticker": "AMZN", "name": "Amazon Com Ord Shs", "weight": 3.5, "sector": "Consumer Discretionary"},
+      {"ticker": "GOOGL", "name": "Alphabet Ord Shs Class A", "weight": 2.9, "sector": "Communication Services"},
+      {"ticker": "GOOG", "name": "Alphabet Ord Shs Class C", "weight": 2.5, "sector": "Communication Services"},
+      {"ticker": "AVGO", "name": "Broadcom Ord Shs", "weight": 2.5, "sector": "Information Technology"},
+      {"ticker": "META", "name": "Meta Platforms Ord Shs Class A", "weight": 2.2, "sector": "Communication Services"},
+      {"ticker": "TSLA", "name": "Tesla Ord Shs", "weight": 1.8, "sector": "Consumer Discretionary"},
+      {"ticker": "JPM", "name": "JPMorgan Chase Ord Shs", "weight": 1.4, "sector": "Financials"}
     ],
     "_last_refreshed": "2026-06-01",
-    "_page_hash": null
+    "_page_hash": "90840f5f772599c3d79f99b06822f439"
   },
   "SYGESG": {
     "name": "Sygnia Itrix S&P Global 1200 ESG ETF",
@@ -129,6 +129,6 @@
       {"ticker": "V", "name": "Visa Ord Shs Class A", "weight": 1.1, "sector": "Financials"}
     ],
     "_last_refreshed": "2026-06-01",
-    "_page_hash": null
+    "_page_hash": "5ee424ac5237897deeed067ba86bf3b6"
   }
 }

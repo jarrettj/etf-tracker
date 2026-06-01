@@ -12,7 +12,7 @@ app = FastAPI(title="ETF Tracker", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5174"],
+    allow_origins=["http://localhost:5174", "http://localhost:5175"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -217,6 +217,18 @@ def health():
 @app.get("/api/etf/status/meta")
 def etf_meta():
     return get_db_meta()
+
+
+@app.get("/api/status/scrape")
+def scrape_status():
+    """Return current and historical scrape run status."""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+        from scrape_status import get_status
+        return get_status()
+    except Exception as e:
+        return {"current_run": None, "last_runs": [], "error": str(e)}
 
 
 @app.get("/api/etf")
