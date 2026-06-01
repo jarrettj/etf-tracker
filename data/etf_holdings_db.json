@@ -1,0 +1,58 @@
+{
+  "_comment": "ETF Holdings Database - JSE ETFs tracked by ETF Tracker",
+  "_updated": "2026-06-01",
+  "_source": "Manual - fact sheet data populated via refresh script",
+  "STXESG": {
+    "name": "Satrix MSCI World ESG Enhanced Feeder ETF",
+    "benchmark": "MSCI World ESG Enhanced Select Index",
+    "ter": 0.34,
+    "holdings": [],
+    "_last_refreshed": null
+  },
+  "STXNDQ": {
+    "name": "Satrix Nasdaq 100 ETF",
+    "benchmark": "NASDAQ 100 Index",
+    "ter": 0.45,
+    "holdings": [
+      {"ticker": "NVDA", "name": "Nvidia Corp", "weight": 8.59, "sector": "Information Technology"},
+      {"ticker": "AAPL", "name": "Apple Inc", "weight": 7.06, "sector": "Information Technology"},
+      {"ticker": "MSFT", "name": "Microsoft Corp", "weight": 5.36, "sector": "Information Technology"},
+      {"ticker": "AMZN", "name": "Amazon.com Inc", "weight": 5.04, "sector": "Consumer Discretionary"},
+      {"ticker": "GOOGL", "name": "Alphabet Inc Cl A", "weight": 3.96, "sector": "Communication Services"},
+      {"ticker": "GOOG", "name": "Alphabet Inc Cl C", "weight": 3.69, "sector": "Communication Services"},
+      {"ticker": "AVGO", "name": "Broadcom Inc", "weight": 3.51, "sector": "Information Technology"},
+      {"ticker": "TSLA", "name": "Tesla Inc", "weight": 3.37, "sector": "Consumer Discretionary"},
+      {"ticker": "META", "name": "Meta Platforms Inc", "weight": 3.20, "sector": "Communication Services"},
+      {"ticker": "WMT", "name": "Walmart Inc", "weight": 3.15, "sector": "Consumer Staples"}
+    ],
+    "_last_refreshed": "2026-05-31"
+  },
+  "SYG4IR": {
+    "name": "Sygnia Itrix 4th Industrial Revolution Global Equity AMETF",
+    "benchmark": "Indxx 4th Industrial Revolution Index",
+    "ter": 0.64,
+    "holdings": [],
+    "_last_refreshed": null
+  },
+  "SYGEU": {
+    "name": "Sygnia Itrix Euro Stoxx 50 ETF",
+    "benchmark": "Euro Stoxx 50 Index",
+    "ter": 0.91,
+    "holdings": [],
+    "_last_refreshed": null
+  },
+  "SYGUS": {
+    "name": "Sygnia Itrix MSCI USA Index ETF",
+    "benchmark": "MSCI USA Index",
+    "ter": 0.89,
+    "holdings": [],
+    "_last_refreshed": null
+  },
+  "SYGESG": {
+    "name": "Sygnia Itrix S&P Global 1200 ESG ETF",
+    "benchmark": "S&P Global 1200 ESG Index",
+    "ter": 0.37,
+    "holdings": [],
+    "_last_refreshed": null
+  }
+}
