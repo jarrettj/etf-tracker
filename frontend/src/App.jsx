@@ -3,6 +3,51 @@ import { createRoot } from 'react-dom/client';
 
 const API = '';
 
+// ── Theme ────────────────────────────────────────────────────────────────────
+function getInitialTheme() {
+  const stored = localStorage.getItem('theme');
+  if (stored === 'light' || stored === 'dark') return stored;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+}
+
+const ThemeContext = React.createContext();
+
+function ThemeProvider({ children }) {
+  const [theme, setThemeState] = React.useState(() => {
+    const t = getInitialTheme();
+    applyTheme(t);
+    return t;
+  });
+
+  const toggle = React.useCallback(() => {
+    setThemeState(prev => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      localStorage.setItem('theme', next);
+      return next;
+    });
+  }, []);
+
+  return (
+    <ThemeContext.Provider value={{ theme, toggle }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+}
+
+function ThemeToggle() {
+  const { theme, toggle } = React.useContext(ThemeContext);
+  return (
+    <button className="theme-toggle" onClick={toggle} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
+      {theme === 'dark' ? '☀️' : '🌙'}
+    </button>
+  );
+}
+
 function formatZAR(n) {
   if (n === null || n === undefined || n === '-') return '-';
   return 'R ' + Number(n).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -399,6 +444,7 @@ function App() {
           <button className={tab === 'portfolio' ? 'active' : ''} onClick={() => setTab('portfolio')}>Portfolio</button>
           <button className={tab === 'holdings' ? 'active' : ''} onClick={() => setTab('holdings')}>Holdings</button>
           <button className={tab === 'etfs' ? 'active' : ''} onClick={() => setTab('etfs')}>ETFs</button>
+          <ThemeToggle />
         </div>
       </div>
 
@@ -410,6 +456,10 @@ function App() {
 }
 
 // ── Mount ───────────────────────────────────────────────────────────────────
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(
+  <ThemeProvider>
+    <App />
+  </ThemeProvider>
+);
 
 export default App;
