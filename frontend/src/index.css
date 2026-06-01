@@ -12,6 +12,7 @@
   /* Surfaces */
   --bg-base:          #0f172a;
   --bg-card:          #1e293b;
+  --bg-secondary:     #162032;
   --bg-input:         #0f172a;
   --bg-elevated:      #334155;
   --border:           #334155;
@@ -57,6 +58,7 @@
   /* Surfaces */
   --bg-base:          #f8fafc;
   --bg-card:          #ffffff;
+  --bg-secondary:     #f1f5f9;
   --bg-input:         #f1f5f9;
   --bg-elevated:      #e2e8f0;
   --border:           #e2e8f0;

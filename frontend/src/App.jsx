@@ -493,6 +493,33 @@ function EtfDetail({ etf }) {
   );
 }
 
+// ── Error Boundary ──────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 24, fontFamily: 'monospace', background: '#0f1f2a', color: '#ef4444', minHeight: '100vh' }}>
+          <h2 style={{ color: '#ef4444' }}>⚠️ ETF Tracker — Render Error</h2>
+          <pre style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginTop: 16 }}>
+            {this.state.error.stack || this.state.error.message || String(this.state.error)}
+          </pre>
+          <button onClick={() => window.location.reload()} style={{ marginTop: 16, padding: '8px 16px', background: '#334155', color: '#f1f6f9', border: '1px solid #475669', borderRadius: 4, cursor: 'pointer' }}>
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ── App ─────────────────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab] = React.useState('portfolio');
@@ -518,9 +545,11 @@ function App() {
 
 // ── Mount ───────────────────────────────────────────────────────────────────
 createRoot(document.getElementById('root')).render(
-  <ThemeProvider>
-    <App />
-  </ThemeProvider>
+  <ErrorBoundary>
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>
+  </ErrorBoundary>
 );
 
 export default App;
