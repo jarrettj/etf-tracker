@@ -3,9 +3,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from pathlib import Path
-import json
-import os
+import json, os, hashlib
+from datetime import datetime, timezone
 
 app = FastAPI(title="ETF Tracker", version="0.1.0")
 
@@ -17,15 +18,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# After frontend is built, serve static files
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
-if _FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
-
-
-# ── Data paths ──────────────────────────────────────────────────────────────
+_RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 _HOLDINGS_DB_PATH = Path(__file__).parent.parent / "data" / "etf_holdings_db.json"
 _holdings_cache: dict | None = None
+
+if _FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
 
 
 def _load_holdings_db() -> dict:
@@ -34,6 +33,11 @@ def _load_holdings_db() -> dict:
         with open(_HOLDINGS_DB_PATH, encoding="utf-8") as f:
             _holdings_cache = json.load(f)
     return _holdings_cache
+
+
+def _invalidate_cache():
+    global _holdings_cache
+    _holdings_cache = None
 
 
 def get_etf_info(ticker: str) -> dict | None:
@@ -53,7 +57,29 @@ def get_all_etf_codes() -> list[str]:
     return [k for k in db.keys() if not k.startswith("_")]
 
 
-# ── Portfolio paths ─────────────────────────────────────────────────────────
+def get_db_meta() -> dict:
+    db = _load_holdings_db()
+    codes = get_all_etf_codes()
+    etfs = []
+    for code in codes:
+        info = get_etf_info(code)
+        if info:
+            etfs.append({
+                "ticker": code,
+                "name": info.get("name"),
+                "last_refreshed": info.get("_last_refreshed"),
+                "page_hash": info.get("_page_hash"),
+                "holding_count": len(info.get("holdings", [])),
+            })
+    return {
+        "etf_count": len(codes),
+        "updated": db.get("_updated"),
+        "source": db.get("_source"),
+        "raw_dir": db.get("_raw_dir"),
+        "etfs": etfs,
+    }
+
+
 _PORTFOLIO_PATH = Path.home() / ".tradingagents" / "etf_portfolio.json"
 
 
@@ -67,15 +93,13 @@ def _load_portfolio() -> dict:
 
 
 def _save_portfolio(data: dict) -> None:
-    from datetime import datetime, timezone
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     _PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
     _PORTFOLIO_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
-# ── Price cache ─────────────────────────────────────────────────────────────
 _PRICE_CACHE_PATH = Path.home() / ".tradingagents" / "etf_prices_cache.json"
-_PRICE_CACHE_TTL = 300  # 5 minutes
+_PRICE_CACHE_TTL = 300
 
 
 def _load_price_cache() -> dict:
@@ -102,7 +126,6 @@ def get_price(ticker: str) -> float | None:
     cache = _load_price_cache()
     if ticker.upper() in cache:
         return cache[ticker.upper()].get("price")
-
     try:
         import yfinance as yf
         yf_ticker = ticker if "." in ticker else f"{ticker}.JO"
@@ -125,6 +148,11 @@ def health():
     return {"status": "ok", "app": "etf-tracker"}
 
 
+@app.get("/api/etf/status/meta")
+def etf_meta():
+    return get_db_meta()
+
+
 @app.get("/api/etf")
 def list_etfs():
     codes = get_all_etf_codes()
@@ -138,6 +166,8 @@ def list_etfs():
                 "benchmark": info.get("benchmark", ""),
                 "ter": info.get("ter", 0),
                 "holding_count": len(info.get("holdings", [])),
+                "last_refreshed": info.get("_last_refreshed"),
+                "page_hash": info.get("_page_hash"),
             })
     return {"etfs": result}
 
@@ -155,8 +185,30 @@ def etf_detail(ticker: str):
         "ter": info.get("ter"),
         "current_price": price,
         "holdings": info.get("holdings", []),
+        "holding_count": info.get("holding_count"),
+        "last_refreshed": info.get("_last_refreshed"),
+        "page_hash": info.get("_page_hash"),
     }
 
+
+@app.get("/api/etf/{ticker}/raw")
+def etf_raw_source(ticker: str):
+    """Serve raw scraped source for an ETF."""
+    ticker = ticker.upper()
+    raw_path = _RAW_DIR / f"{ticker}.txt"
+    if not raw_path.exists():
+        raise HTTPException(status_code=404, detail="No raw source stored")
+    return HTMLResponse(content=raw_path.read_text(encoding="utf-8"))
+
+
+@app.post("/api/refresh")
+async def trigger_refresh():
+    """Invalidate cache so next request picks up fresh DB data."""
+    _invalidate_cache()
+    return {"status": "ok", "message": "Cache invalidated. Data will be reloaded on next request."}
+
+
+# ── Portfolio routes ───────────────────────────────────────────────────────
 
 @app.get("/api/portfolio")
 def portfolio_summary():
@@ -164,7 +216,6 @@ def portfolio_summary():
     positions_out = []
     total_value = 0.0
     total_cost = 0.0
-
     for pos in data["positions"]:
         price = get_price(pos["etf_ticker"])
         etf_info = get_etf_info(pos["etf_ticker"])
@@ -185,11 +236,8 @@ def portfolio_summary():
             "pnl_pct": round(pnl / cost * 100, 2) if cost > 0 else 0,
             "ter": etf_info.get("ter", 0) if etf_info else 0,
         })
-
-    # Calculate weight percentages
     for p in positions_out:
         p["weight_pct"] = round(p["value_zar"] / total_value * 100, 2) if total_value > 0 else 0
-
     return {
         "positions": positions_out,
         "total_value_zar": round(total_value, 2),
@@ -205,30 +253,17 @@ async def add_position(body: dict):
     shares = float(body.get("shares", 0))
     cost = float(body.get("cost_basis_per_share", 0))
     currency = body.get("currency", "ZAR")
-
     if not ticker or shares <= 0:
         raise HTTPException(status_code=422, detail="etf_ticker and shares required")
-
     data = _load_portfolio()
-
-    # If position already exists, update it (weighted average cost basis)
     for pos in data["positions"]:
         if pos["etf_ticker"] == ticker:
             total = pos["shares"] + shares
-            pos["cost_basis_per_share"] = round(
-                (pos["shares"] * pos["cost_basis_per_share"] + shares * cost) / total, 4
-            )
+            pos["cost_basis_per_share"] = round((pos["shares"] * pos["cost_basis_per_share"] + shares * cost) / total, 4)
             pos["shares"] = total
             _save_portfolio(data)
             return pos
-
-    # Otherwise add new position
-    data["positions"].append({
-        "etf_ticker": ticker,
-        "shares": shares,
-        "cost_basis_per_share": cost,
-        "currency": currency,
-    })
+    data["positions"].append({"etf_ticker": ticker, "shares": shares, "cost_basis_per_share": cost, "currency": currency})
     _save_portfolio(data)
     return data["positions"][-1]
 
@@ -247,63 +282,38 @@ def remove_position(etf_ticker: str):
 @app.get("/api/portfolio/rollup")
 def portfolio_rollup():
     from collections import defaultdict
-
     data = _load_portfolio()
     holdings_map = {}
     sector_map = defaultdict(float)
-    total_value = sum(
-        p["shares"] * (get_price(p["etf_ticker"]) or 0)
-        for p in data["positions"]
-    )
-
+    total_value = sum(p["shares"] * (get_price(p["etf_ticker"]) or 0) for p in data["positions"])
     for pos in data["positions"]:
         etf_info = get_etf_info(pos["etf_ticker"])
         if not etf_info:
             continue
         etf_value = pos["shares"] * (get_price(pos["etf_ticker"]) or 0)
         etf_weight = etf_value / total_value if total_value > 0 else 0
-
         for h in etf_info.get("holdings", []):
             t = h["ticker"]
-            w = h["weight"] / 100 * etf_weight * 100  # weight as % of total portfolio
-
+            w = h["weight"] / 100 * etf_weight * 100
             if t not in holdings_map:
-                holdings_map[t] = {
-                    "ticker": t,
-                    "name": h["name"],
-                    "total_weight_pct": 0,
-                    "via_etfs": [],
-                    "sector": h.get("sector", "Unknown"),
-                }
+                holdings_map[t] = {"ticker": t, "name": h["name"], "total_weight_pct": 0, "via_etfs": [], "sector": h.get("sector", "Unknown")}
             holdings_map[t]["total_weight_pct"] += w
-            holdings_map[t]["via_etfs"].append({
-                "etf_ticker": pos["etf_ticker"],
-                "weight_pct": round(w, 4),
-            })
+            holdings_map[t]["via_etfs"].append({"etf_ticker": pos["etf_ticker"], "weight_pct": round(w, 4)})
             sector_map[h.get("sector", "Unknown")] += w
-
-    # Round weights and sort
-    consolidated = sorted(holdings_map.values(), key=lambda x: x["total_weight_pct"], reverse=True)
+    consolidated = sorted(holdings_map.values(), key=lambda x: -x["total_weight_pct"])
     for h in consolidated:
         h["total_weight_pct"] = round(h["total_weight_pct"], 4)
-
-    top_10 = consolidated[:10]
-    sector_allocation = dict(sorted(sector_map.items(), key=lambda x: x[1], reverse=True))
-
     return {
         "consolidated_holdings": consolidated[:50],
-        "sector_allocation": sector_allocation,
-        "top_10": top_10,
+        "sector_allocation": dict(sorted(sector_map.items(), key=lambda x: -x[1])),
+        "top_10": consolidated[:10],
     }
 
 
-# ── Serve frontend (SPA fallback) ───────────────────────────────────────────
+# ── SPA fallback ────────────────────────────────────────────────────────────
 if _FRONTEND_DIST.exists():
-    from fastapi.responses import HTMLResponse
-
     @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
     async def serve_spa(full_path: str):
-        # Don't catch API routes
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not found")
         index_file = _FRONTEND_DIST / "index.html"

@@ -1,12 +1,21 @@
 {
   "_comment": "ETF Holdings Database - JSE ETFs tracked by ETF Tracker",
   "_updated": "2026-06-01",
-  "_source": "Fund fact sheets via web scraping (satrix.co.za, sygnia.co.za, etfsa.co.za)",
+  "_source": "Fund fact sheets via web scraping",
+  "_raw_dir": "data/raw/",
+  "_scrape_urls": {
+    "STXESG": "https://satrix.co.za/fund/mdd/STXESG",
+    "STXNDQ": "https://satrix.co.za/fund/mdd/STXNDQ",
+    "SYG4IR": "https://www.sygnia.co.za/fund/sygnia-4th-industrial-revolution-global-equity-fund-class-a",
+    "SYGEU": "https://www.sygnia.co.za/fund/sygnia-itrix-euro-stoxx-50-etf",
+    "SYGUS": "https://www.sygnia.co.za/fund/sygnia-itrix-msci-usa-index-etf",
+    "SYGESG": "https://www.sygnia.co.za/fund/sygnia-itrix-s-p-global-1200-esg-etf"
+  },
   "STXESG": {
     "name": "Satrix MSCI World ESG Enhanced Feeder ETF",
     "benchmark": "MSCI World ESG Enhanced Focus CTB Index",
     "ter": 0.34,
-    "_source_url": "https://satrix.co.za/fund/mdd/STXESG",
+    "holdings_count": 10,
     "holdings": [
       {"ticker": "NVDA", "name": "Nvidia Corp", "weight": 5.59, "sector": "Information Technology"},
       {"ticker": "AAPL", "name": "Apple Inc", "weight": 4.57, "sector": "Information Technology"},
@@ -19,13 +28,14 @@
       {"ticker": "JNJ", "name": "Johnson & Johnson", "weight": 0.88, "sector": "Health Care"},
       {"ticker": "LLY", "name": "Eli Lilly", "weight": 0.88, "sector": "Health Care"}
     ],
-    "_last_refreshed": "2026-06-01"
+    "_last_refreshed": "2026-06-01",
+    "_page_hash": null
   },
   "STXNDQ": {
     "name": "Satrix Nasdaq 100 ETF",
     "benchmark": "NASDAQ 100 Index",
     "ter": 0.45,
-    "_source_url": "https://satrix.co.za/fund/mdd/STXNDQ",
+    "holdings_count": 10,
     "holdings": [
       {"ticker": "NVDA", "name": "Nvidia Corp", "weight": 8.59, "sector": "Information Technology"},
       {"ticker": "AAPL", "name": "Apple Inc", "weight": 7.06, "sector": "Information Technology"},
@@ -38,13 +48,14 @@
       {"ticker": "META", "name": "Meta Platforms Inc", "weight": 3.20, "sector": "Communication Services"},
       {"ticker": "WMT", "name": "Walmart Inc", "weight": 3.15, "sector": "Consumer Staples"}
     ],
-    "_last_refreshed": "2026-06-01"
+    "_last_refreshed": "2026-06-01",
+    "_page_hash": null
   },
   "SYG4IR": {
     "name": "Sygnia Itrix 4th Industrial Revolution Global Equity AMETF",
     "benchmark": "Solactive GBS United States 500 Index",
     "ter": 0.64,
-    "_source_url": "https://www.sygnia.co.za/fund/sygnia-4th-industrial-revolution-global-equity-fund-class-a",
+    "holdings_count": 10,
     "holdings": [
       {"ticker": "MSFT", "name": "Microsoft Ord Shs", "weight": 8.2, "sector": "Information Technology"},
       {"ticker": "NVDA", "name": "NVIDIA Ord Shs", "weight": 7.6, "sector": "Information Technology"},
@@ -57,13 +68,14 @@
       {"ticker": "TSM", "name": "Taiwan Semiconductor Manufacturing ADR", "weight": 2.1, "sector": "Information Technology"},
       {"ticker": "ASML", "name": "ASML Holding ADR", "weight": 2.0, "sector": "Information Technology"}
     ],
-    "_last_refreshed": "2026-06-01"
+    "_last_refreshed": "2026-06-01",
+    "_page_hash": null
   },
   "SYGEU": {
     "name": "Sygnia Itrix Euro Stoxx 50 ETF",
     "benchmark": "Euro STOXX 50 Index",
     "ter": 0.91,
-    "_source_url": "https://www.sygnia.co.za/fund/sygnia-itrix-euro-stoxx-50-etf",
+    "holdings_count": 10,
     "holdings": [
       {"ticker": "ASML", "name": "ASML Holding Ord Shs", "weight": 9.8, "sector": "Information Technology"},
       {"ticker": "TTE", "name": "TotalEnergies Ord Shs", "weight": 4.4, "sector": "Energy"},
@@ -76,13 +88,14 @@
       {"ticker": "MC", "name": "LVMH Ord Shs", "weight": 2.9, "sector": "Consumer Discretionary"},
       {"ticker": "DTE", "name": "Deutsche Telekom N Ord Shs", "weight": 2.8, "sector": "Communication Services"}
     ],
-    "_last_refreshed": "2026-06-01"
+    "_last_refreshed": "2026-06-01",
+    "_page_hash": null
   },
   "SYGUS": {
     "name": "Sygnia Itrix MSCI USA Index ETF",
     "benchmark": "MSCI USA Index",
     "ter": 0.89,
-    "_source_url": "https://www.sygnia.co.za/fund/sygnia-itrix-msci-usa-index-etf",
+    "holdings_count": 10,
     "holdings": [
       {"ticker": "AAPL", "name": "Apple Ord Shs", "weight": 7.1, "sector": "Information Technology"},
       {"ticker": "MSFT", "name": "Microsoft Ord Shs", "weight": 6.3, "sector": "Information Technology"},
@@ -95,13 +108,14 @@
       {"ticker": "JPM", "name": "JPMorgan Chase Ord Shs", "weight": 1.2, "sector": "Financials"},
       {"ticker": "AVGO", "name": "Broadcom Ord Shs", "weight": 1.2, "sector": "Information Technology"}
     ],
-    "_last_refreshed": "2026-06-01"
+    "_last_refreshed": "2026-06-01",
+    "_page_hash": null
   },
   "SYGESG": {
     "name": "Sygnia Itrix S&P Global 1200 ESG ETF",
     "benchmark": "S&P Global 1200 ESG Index",
     "ter": 0.37,
-    "_source_url": "https://www.sygnia.co.za/fund/sygnia-itrix-s-p-global-1200-esg-etf",
+    "holdings_count": 10,
     "holdings": [
       {"ticker": "AAPL", "name": "Apple Ord Shs", "weight": 6.9, "sector": "Information Technology"},
       {"ticker": "MSFT", "name": "Microsoft Ord Shs", "weight": 6.0, "sector": "Information Technology"},
@@ -114,6 +128,7 @@
       {"ticker": "LLY", "name": "Eli Lilly Ord Shs", "weight": 1.2, "sector": "Health Care"},
       {"ticker": "V", "name": "Visa Ord Shs Class A", "weight": 1.1, "sector": "Financials"}
     ],
-    "_last_refreshed": "2026-06-01"
+    "_last_refreshed": "2026-06-01",
+    "_page_hash": null
   }
 }
