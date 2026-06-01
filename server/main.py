@@ -301,8 +301,11 @@ def portfolio_rollup():
 if _FRONTEND_DIST.exists():
     from fastapi.responses import HTMLResponse
 
-    @app.get("/{full_path:path}", response_class=HTMLResponse)
+    @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
     async def serve_spa(full_path: str):
+        # Don't catch API routes
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
         index_file = _FRONTEND_DIST / "index.html"
         if index_file.exists():
             return HTMLResponse(content=index_file.read_text(encoding="utf-8"))

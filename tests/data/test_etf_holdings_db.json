@@ -1,0 +1,32 @@
+{
+  "_comment": "Test ETF Holdings Database",
+  "_updated": "2026-06-01",
+  "STXNDQ": {
+    "name": "Satrix Nasdaq 100 ETF",
+    "benchmark": "NASDAQ 100 Index",
+    "ter": 0.45,
+    "holdings": [
+      {"ticker": "NVDA", "name": "Nvidia Corp", "weight": 8.59, "sector": "Information Technology"},
+      {"ticker": "AAPL", "name": "Apple Inc", "weight": 7.06, "sector": "Information Technology"},
+      {"ticker": "MSFT", "name": "Microsoft Corp", "weight": 5.36, "sector": "Information Technology"},
+      {"ticker": "AMZN", "name": "Amazon.com Inc", "weight": 5.04, "sector": "Consumer Discretionary"},
+      {"ticker": "GOOGL", "name": "Alphabet Inc Cl A", "weight": 3.96, "sector": "Communication Services"}
+    ]
+  },
+  "STXESG": {
+    "name": "Satrix MSCI World ESG Enhanced Feeder ETF",
+    "benchmark": "MSCI World ESG Enhanced Select Index",
+    "ter": 0.34,
+    "holdings": []
+  },
+  "SYGUS": {
+    "name": "Sygnia Itrix MSCI USA Index ETF",
+    "benchmark": "MSCI USA Index",
+    "ter": 0.89,
+    "holdings": [
+      {"ticker": "AAPL", "name": "Apple Inc", "weight": 4.20, "sector": "Information Technology"},
+      {"ticker": "MSFT", "name": "Microsoft Corp", "weight": 3.80, "sector": "Information Technology"},
+      {"ticker": "NVDA", "name": "Nvidia Corp", "weight": 2.50, "sector": "Information Technology"}
+    ]
+  }
+}

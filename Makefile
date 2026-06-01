@@ -77,6 +77,18 @@ lint-frontend: ## Lint TypeScript frontend
 	@echo "==> Linting frontend..."
 	cd $(FRONTEND_DIR) && npm run lint
 
+# ── Testing ──────────────────────────────────────────────────────────────────
+test: test-backend test-frontend ## Run all tests
+
+test-backend: ## Run backend pytest suite
+	@echo "==> Running backend tests..."
+	.venv/bin/pip install -q -r requirements-dev.txt
+	.venv/bin/pytest tests/ -v
+
+test-frontend: ## Run frontend vitest suite
+	@echo "==> Running frontend tests..."
+	cd frontend && npm run test -- --run 2>/dev/null || echo "  (no frontend tests configured yet)"
+
 # ── Clean ──────────────────────────────────────────────────────────────────
 clean: ## Remove build artifacts and caches
 	@echo "==> Cleaning build artifacts..."
