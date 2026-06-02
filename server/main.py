@@ -207,6 +207,47 @@ def get_price(ticker: str) -> dict | None:
     return None
 
 
+def _price_value(p) -> float:
+    """Extract a numeric price from a ``get_price`` result.
+
+    Tolerates both the real ``{"price": float, ...}`` dict and a bare float
+    (the shape some tests mock ``get_price`` to return), as well as ``None``.
+    """
+    if isinstance(p, dict):
+        return p.get("price") or 0.0
+    return p or 0.0
+
+
+def _build_price_map(tickers) -> dict:
+    """Call ``get_price`` once per unique ticker for a single request.
+
+    Avoids the repeated lookups (and potential yfinance calls) that occur when
+    ``get_price`` is invoked multiple times per position inside ``portfolio_summary``
+    and ``portfolio_rollup``.
+    """
+    return {t: get_price(t) for t in set(tickers)}
+
+
+def _expire_price_cache() -> bool:
+    """Force the price cache out of its 'fresh' window without deleting prices.
+
+    Backdates ``_cached_at`` to just past ``_PRICE_CACHE_TTL`` (but still within
+    ``_PRICE_CACHE_STALE_TTL``) so the next ``get_price`` re-fetches from
+    yfinance, yet the cached values remain available as a stale fallback if the
+    network fails. Returns False if no cache exists.
+    """
+    import time
+    if not _PRICE_CACHE_PATH.exists():
+        return False
+    try:
+        data = json.loads(_PRICE_CACHE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    data["_cached_at"] = time.time() - _PRICE_CACHE_TTL - 60
+    _PRICE_CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return True
+
+
 # ── API routes ──────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -288,17 +329,39 @@ async def trigger_refresh():
     return {"status": "ok", "message": "Cache invalidated. Data will be reloaded on next request."}
 
 
+@app.post("/api/refresh-prices")
+async def refresh_prices():
+    """Expire the price cache so the next read re-fetches live prices.
+
+    The server stays a reader: this only marks the cache stale (sets
+    ``_cached_at`` to 0), so the next ``get_price`` per ticker falls through to
+    yfinance, with the existing cached values as a fallback. It does **not**
+    invoke the richer JSE/AVMF sources used by ``scripts/refresh_prices.py``
+    (cron); those remain out-of-band.
+    """
+    had_cache = _expire_price_cache()
+    return {
+        "status": "ok",
+        "message": (
+            "Price cache expired; live prices will be re-fetched on next read."
+            if had_cache
+            else "No price cache to expire; prices fetched on demand."
+        ),
+    }
+
+
 # ── Portfolio routes ───────────────────────────────────────────────────────
 
 @app.get("/api/portfolio")
 def portfolio_summary():
     data = _load_portfolio()
+    prices = _build_price_map(pos["etf_ticker"] for pos in data["positions"])
     positions_out = []
     total_value = 0.0
     total_cost = 0.0
     for pos in data["positions"]:
-        p = get_price(pos["etf_ticker"])
-        price_val = p["price"] if p else None
+        p = prices.get(pos["etf_ticker"])
+        price_val = _price_value(p) if p is not None else None
         etf_info = get_etf_info(pos["etf_ticker"])
         value = pos["shares"] * (price_val or 0)
         cost = pos["shares"] * pos["cost_basis_per_share"]
@@ -311,7 +374,7 @@ def portfolio_summary():
             "shares": pos["shares"],
             "cost_basis_per_share": pos["cost_basis_per_share"],
             "last_price": price_val,
-            "price_stale": p.get("stale", False) if p else None,
+            "price_stale": p.get("stale", False) if isinstance(p, dict) else False,
             "value_zar": round(value, 2),
             "cost_zar": round(cost, 2),
             "pnl_zar": round(pnl, 2),
@@ -350,6 +413,28 @@ async def add_position(body: dict):
     return data["positions"][-1]
 
 
+@app.put("/api/portfolio/positions/{etf_ticker}")
+async def update_position(etf_ticker: str, body: dict):
+    """Replace an existing position's shares and cost basis (an edit, not an add).
+
+    Unlike ``add_position`` which averages the cost basis, this overwrites the
+    stored ``shares`` and ``cost_basis_per_share`` outright.
+    """
+    ticker = etf_ticker.strip().upper()
+    shares = float(body.get("shares", 0))
+    cost = float(body.get("cost_basis_per_share", 0))
+    if shares <= 0:
+        raise HTTPException(status_code=422, detail="shares must be greater than 0")
+    data = _load_portfolio()
+    for pos in data["positions"]:
+        if pos["etf_ticker"] == ticker:
+            pos["shares"] = shares
+            pos["cost_basis_per_share"] = cost
+            _save_portfolio(data)
+            return pos
+    raise HTTPException(status_code=404, detail="Position not found")
+
+
 @app.delete("/api/portfolio/positions/{etf_ticker}")
 def remove_position(etf_ticker: str):
     data = _load_portfolio()
@@ -365,14 +450,15 @@ def remove_position(etf_ticker: str):
 def portfolio_rollup():
     from collections import defaultdict
     data = _load_portfolio()
+    prices = _build_price_map(pos["etf_ticker"] for pos in data["positions"])
     holdings_map = {}
     sector_map = defaultdict(float)
-    total_value = sum(p["shares"] * (get_price(p["etf_ticker"]) or {}).get("price", 0) for p in data["positions"])
+    total_value = sum(pos["shares"] * _price_value(prices.get(pos["etf_ticker"])) for pos in data["positions"])
     for pos in data["positions"]:
         etf_info = get_etf_info(pos["etf_ticker"])
         if not etf_info:
             continue
-        etf_value = pos["shares"] * (get_price(pos["etf_ticker"]) or {}).get("price", 0)
+        etf_value = pos["shares"] * _price_value(prices.get(pos["etf_ticker"]))
         etf_weight = etf_value / total_value if total_value > 0 else 0
         for h in etf_info.get("holdings", []):
             t = h["ticker"]

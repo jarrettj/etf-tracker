@@ -22,6 +22,15 @@ import json, sys, argparse, time, urllib.request, urllib.error
 from pathlib import Path
 from datetime import datetime, timezone
 
+# Shared scrape-status tracker (writes data/scrape_status.json so the backend's
+# /api/status/scrape endpoint can surface progress). Imported defensively so a
+# status-tracking problem never breaks the actual price refresh.
+sys.path.insert(0, str(Path(__file__).parent))
+try:
+    import scrape_status
+except Exception:  # pragma: no cover - tracking is best-effort
+    scrape_status = None
+
 PRICE_CACHE_PATH = Path.home() / ".tradingagents" / "etf_prices_cache.json"
 
 # Ticker -> (display name, JSE_MW path or None)
@@ -33,6 +42,16 @@ TICKERS = {
     "SYGUS":  ("Sygnia Itrix MSCI USA Index ETF", None),
     "SYGESG": ("Sygnia Itrix S&P Global 1200 ESG ETF", None),
 }
+
+
+def _track(fn_name: str, *args, **kwargs) -> None:
+    """Best-effort call into scrape_status; never raises into the refresh flow."""
+    if scrape_status is None:
+        return
+    try:
+        getattr(scrape_status, fn_name)(*args, **kwargs)
+    except Exception:  # pragma: no cover - tracking is best-effort
+        pass
 
 
 def _load_existing_cache() -> dict:
@@ -161,6 +180,9 @@ def main():
     updated = 0
     skipped = 0
 
+    known = [t for t in target_tickers if t in TICKERS]
+    _track("start_run", "prices", known)
+
     for ticker in target_tickers:
         if ticker not in TICKERS:
             print(f"  SKIP {ticker}: not in TICKERS table")
@@ -173,10 +195,13 @@ def main():
             tag = "⚠️ STALE" if result["source"] == "stale_cache" else "✓"
             print(f"  {tag} {ticker}: {result['price']} {result['currency']} (via {result['source']})")
             updated += 1
+            _track("update_ticker", ticker, "done", source=result["source"])
         else:
             print(f"  ✗ {ticker}: no price from any source")
             skipped += 1
+            _track("update_ticker", ticker, "failed", error="no price from any source")
 
+    _track("finish_run")
     _save_cache(cache)
     print(f"\n  Saved {updated} prices to {PRICE_CACHE_PATH}  [{now_str}]")
     if skipped:

@@ -18,6 +18,13 @@ import json, sys, argparse
 from pathlib import Path
 from datetime import datetime, timezone
 
+# Shared scrape-status tracker (best-effort; never breaks a holdings update).
+sys.path.insert(0, str(Path(__file__).parent))
+try:
+    import scrape_status
+except Exception:  # pragma: no cover - tracking is best-effort
+    scrape_status = None
+
 REPO_ROOT = Path(__file__).parent.parent
 DB_PATH = REPO_ROOT / "data" / "etf_holdings_db.json"
 
@@ -129,6 +136,11 @@ def update_etf(db: dict, ticker: str, holdings: list) -> None:
         "_source_url": src["url"],
         "_last_refreshed": refresh_date,
     }
+    if scrape_status is not None:
+        try:
+            scrape_status.update_ticker(ticker, "done", source="agent", holdings_found=len(holdings))
+        except Exception:  # pragma: no cover - tracking is best-effort
+            pass
     print(f"  Updated {ticker}: {len(holdings)} holdings, _last_refreshed={refresh_date}")
 
 

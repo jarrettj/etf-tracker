@@ -1,6 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
-	import { getInitialTheme, applyTheme, formatZAR, formatPct } from '$lib/utils.js';
+	import { getInitialTheme, applyTheme, formatZAR, formatPct, sortRows, filterRows, toCsv, downloadCsv } from '$lib/utils.js';
 	import { api } from '$lib/api.js';
 
 	// Inline sub-components
@@ -28,6 +28,21 @@
 	let adding = $state(false);
 	let addError = $state(null);
 
+	// ── Edit position state ──
+	let editTicker = $state(null);
+	let editShares = $state('');
+	let editCost = $state('');
+	let editing = $state(false);
+	let editError = $state(null);
+
+	// ── Table sort/filter state ──
+	let portfolioFilter = $state('');
+	let portfolioSort = $state({ key: 'value_zar', dir: 'desc' });
+	let etfFilter = $state('');
+	let etfSort = $state({ key: 'ticker', dir: 'asc' });
+	let holdingsFilter = $state('');
+	let holdingsSort = $state({ key: 'total_weight_pct', dir: 'desc' });
+
 	// ── ETF list state ──
 	let etfs = $state([]);
 	let etfsLoading = $state(true);
@@ -48,9 +63,11 @@
 	// ── Status state ──
 	let statusMeta = $state(null);
 	let statusHealth = $state(null);
+	let statusScrape = $state(null);
 	let statusLoading = $state(true);
 	let statusError = $state(null);
 	let refreshing = $state(false);
+	let refreshingPrices = $state(false);
 
 	onMount(() => {
 		theme = getInitialTheme();
@@ -114,11 +131,88 @@
 	}
 
 	function toggleDetail(ticker) {
+		if (editTicker) return; // don't collapse the row while editing
 		selectedTicker = selectedTicker === ticker ? null : ticker;
+	}
+
+	function startEdit(ev, p) {
+		ev.stopPropagation();
+		editTicker = p.etf_ticker;
+		editShares = String(p.shares);
+		editCost = String(p.cost_basis_per_share);
+		editError = null;
+	}
+
+	function cancelEdit(ev) {
+		if (ev) ev.stopPropagation();
+		editTicker = null;
+		editError = null;
+	}
+
+	async function saveEdit(ev, ticker) {
+		ev.stopPropagation();
+		const shares = parseFloat(editShares);
+		const cost = parseFloat(editCost) || 0;
+		if (!shares || shares <= 0) {
+			editError = 'Enter valid shares';
+			return;
+		}
+		editing = true;
+		editError = null;
+		try {
+			await api.updatePosition(ticker, { shares, cost_basis_per_share: cost });
+			editTicker = null;
+			await loadPortfolio();
+			await loadHoldings();
+		} catch (e) {
+			editError = e.message;
+		} finally {
+			editing = false;
+		}
+	}
+
+	// ── Sorting helper ──
+	function toggleSort(sortState, key) {
+		if (sortState.key === key) {
+			sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortState.key = key;
+			sortState.dir = 'asc';
+		}
+	}
+
+	function sortIndicator(sortState, key) {
+		if (sortState.key !== key) return '';
+		return sortState.dir === 'asc' ? ' ▲' : ' ▼';
 	}
 
 	let totalPnlPos = $derived(portfolioData?.total_pnl_zar > 0);
 	let totalPnlNeg = $derived(portfolioData?.total_pnl_zar < 0);
+
+	let visiblePositions = $derived(
+		sortRows(
+			filterRows(portfolioData?.positions || [], portfolioFilter, ['etf_ticker', 'etf_name']),
+			portfolioSort.key,
+			portfolioSort.dir
+		)
+	);
+
+	function exportPortfolioCsv() {
+		const cols = [
+			{ key: 'etf_ticker', label: 'Ticker' },
+			{ key: 'etf_name', label: 'Name' },
+			{ key: 'shares', label: 'Shares' },
+			{ key: 'cost_basis_per_share', label: 'Cost/Share' },
+			{ key: 'last_price', label: 'Last Price' },
+			{ key: 'value_zar', label: 'Value (ZAR)' },
+			{ key: 'cost_zar', label: 'Cost (ZAR)' },
+			{ key: 'pnl_zar', label: 'P&L (ZAR)' },
+			{ key: 'pnl_pct', label: 'P&L %' },
+			{ key: 'weight_pct', label: 'Weight %' },
+			{ key: 'ter', label: 'TER' },
+		];
+		downloadCsv('portfolio.csv', toCsv(visiblePositions, cols));
+	}
 
 	// ── ETF functions ──
 	async function loadEtfs() {
@@ -191,14 +285,46 @@
 	}
 
 	let sectors = $derived(Object.entries(holdingsData?.sector_allocation || {}));
+	let maxSectorPct = $derived(sectors.length ? Math.max(...sectors.map(([, p]) => p)) : 0);
+
+	let visibleEtfs = $derived(
+		sortRows(filterRows(etfs, etfFilter, ['ticker', 'name', 'benchmark']), etfSort.key, etfSort.dir)
+	);
+
+	let visibleHoldings = $derived(
+		sortRows(
+			filterRows(holdingsData?.consolidated_holdings || [], holdingsFilter, ['ticker', 'name', 'sector']),
+			holdingsSort.key,
+			holdingsSort.dir
+		)
+	);
+
+	function exportHoldingsCsv() {
+		const rows = (holdingsData?.consolidated_holdings || []).map((h) => ({
+			ticker: h.ticker,
+			name: h.name,
+			total_weight_pct: h.total_weight_pct,
+			sector: h.sector,
+			via_etfs: h.via_etfs.map((v) => v.etf_ticker).join(' '),
+		}));
+		const cols = [
+			{ key: 'ticker', label: 'Ticker' },
+			{ key: 'name', label: 'Name' },
+			{ key: 'total_weight_pct', label: 'Weight %' },
+			{ key: 'sector', label: 'Sector' },
+			{ key: 'via_etfs', label: 'Via ETFs' },
+		];
+		downloadCsv('consolidated_holdings.csv', toCsv(rows, cols));
+	}
 
 	// ── Status functions ──
 	async function loadStatus() {
 		statusLoading = true;
 		try {
-			const [m, h] = await Promise.all([api.statusMeta(), api.health()]);
+			const [m, h, s] = await Promise.all([api.statusMeta(), api.health(), api.statusScrape()]);
 			statusMeta = m;
 			statusHealth = h;
+			statusScrape = s;
 		} catch (e) {
 			statusError = e.message;
 		} finally {
@@ -216,6 +342,24 @@
 		} finally {
 			refreshing = false;
 		}
+	}
+
+	async function refreshPrices() {
+		refreshingPrices = true;
+		try {
+			await api.refreshPrices();
+			await Promise.all([loadPortfolio(), loadHoldings()]);
+		} catch (e) {
+			statusError = e.message;
+		} finally {
+			refreshingPrices = false;
+		}
+	}
+
+	function fmtTime(ts) {
+		if (!ts) return '-';
+		const d = new Date(ts);
+		return isNaN(d.getTime()) ? ts : d.toLocaleString();
 	}
 </script>
 
@@ -285,21 +429,39 @@
 				{#if portfolioData.positions.length === 0}
 					<div class="empty">No positions yet. Add your first ETF above.</div>
 				{:else}
+					<div class="table-toolbar">
+						<input class="filter-input" bind:value={portfolioFilter} placeholder="Filter by ticker or name..." />
+						<button class="btn-secondary btn-sm" onclick={exportPortfolioCsv}>Export CSV</button>
+					</div>
 					<table class="data-table">
 						<thead>
 							<tr>
-								<th>Ticker</th><th>Name</th><th>Shares</th><th>Cost/Share</th>
-								<th>Last Price</th><th>Value (ZAR)</th><th>Cost (ZAR)</th>
-								<th>P&L (ZAR)</th><th>P&L %</th><th>Weight</th><th>TER</th><th></th>
+								<th onclick={() => toggleSort(portfolioSort, 'etf_ticker')} style="cursor:pointer">Ticker{sortIndicator(portfolioSort, 'etf_ticker')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'etf_name')} style="cursor:pointer">Name{sortIndicator(portfolioSort, 'etf_name')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'shares')} style="cursor:pointer">Shares{sortIndicator(portfolioSort, 'shares')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'cost_basis_per_share')} style="cursor:pointer">Cost/Share{sortIndicator(portfolioSort, 'cost_basis_per_share')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'last_price')} style="cursor:pointer">Last Price{sortIndicator(portfolioSort, 'last_price')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'value_zar')} style="cursor:pointer">Value (ZAR){sortIndicator(portfolioSort, 'value_zar')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'cost_zar')} style="cursor:pointer">Cost (ZAR){sortIndicator(portfolioSort, 'cost_zar')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'pnl_zar')} style="cursor:pointer">P&L (ZAR){sortIndicator(portfolioSort, 'pnl_zar')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'pnl_pct')} style="cursor:pointer">P&L %{sortIndicator(portfolioSort, 'pnl_pct')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'weight_pct')} style="cursor:pointer">Weight{sortIndicator(portfolioSort, 'weight_pct')}</th>
+								<th onclick={() => toggleSort(portfolioSort, 'ter')} style="cursor:pointer">TER{sortIndicator(portfolioSort, 'ter')}</th>
+								<th style="width:130px"></th>
 							</tr>
 						</thead>
 						<tbody>
-							{#each portfolioData.positions as p}
+							{#each visiblePositions as p}
 								<tr class:selected={selectedTicker === p.etf_ticker} onclick={() => toggleDetail(p.etf_ticker)} style="cursor:pointer">
 									<td><strong>{p.etf_ticker}</strong></td>
 									<td>{p.etf_name}</td>
-									<td>{p.shares}</td>
-									<td>{formatZAR(p.cost_basis_per_share)}</td>
+									{#if editTicker === p.etf_ticker}
+										<td onclick={(ev) => ev.stopPropagation()}><input type="number" step="any" bind:value={editShares} style="width:80px" /></td>
+										<td onclick={(ev) => ev.stopPropagation()}><input type="number" step="any" bind:value={editCost} style="width:90px" /></td>
+									{:else}
+										<td>{p.shares}</td>
+										<td>{formatZAR(p.cost_basis_per_share)}</td>
+									{/if}
 									<td>
 										{#if p.last_price != null}
 											{formatZAR(p.last_price)}
@@ -313,7 +475,18 @@
 									<td>{p.weight_pct}%</td>
 									<td>{p.ter}%</td>
 									<td>
-										<button class="btn-danger btn-sm" onclick={(e) => { e.stopPropagation(); removePosition(p); }}>Remove</button>
+										{#if editTicker === p.etf_ticker}
+											<div style="display:flex;gap:4px" onclick={(ev) => ev.stopPropagation()}>
+												<button class="btn-primary btn-sm" disabled={editing} onclick={(ev) => saveEdit(ev, p.etf_ticker)}>{editing ? '...' : 'Save'}</button>
+												<button class="btn-secondary btn-sm" onclick={cancelEdit}>Cancel</button>
+											</div>
+											{#if editError}<span style="color:var(--red);font-size:10px">{editError}</span>{/if}
+										{:else}
+											<div style="display:flex;gap:4px">
+												<button class="btn-secondary btn-sm" onclick={(ev) => startEdit(ev, p)}>Edit</button>
+												<button class="btn-danger btn-sm" onclick={(e) => { e.stopPropagation(); removePosition(p); }}>Remove</button>
+											</div>
+										{/if}
 									</td>
 								</tr>
 								{#if selectedTicker === p.etf_ticker}
@@ -324,6 +497,23 @@
 							{/each}
 						</tbody>
 					</table>
+
+					{#if holdingsData?.top_10?.length > 0}
+						<h3 style="margin-top:24px">Top Holdings (look-through)</h3>
+						<table class="data-table">
+							<thead><tr><th>Ticker</th><th>Name</th><th>Weight</th><th>Sector</th></tr></thead>
+							<tbody>
+								{#each holdingsData.top_10 as h}
+									<tr>
+										<td><strong>{h.ticker}</strong></td>
+										<td>{h.name}</td>
+										<td>{formatPct(h.total_weight_pct)}</td>
+										<td>{h.sector}</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					{/if}
 				{/if}
 			{/if}
 		</div>
@@ -339,12 +529,22 @@
 				{#if etfs.length === 0}
 					<div class="empty">No ETFs configured.</div>
 				{:else}
+					<div class="table-toolbar">
+						<input class="filter-input" bind:value={etfFilter} placeholder="Filter by ticker, name or benchmark..." />
+					</div>
 					<table class="data-table">
 						<thead>
-							<tr><th>Ticker</th><th>Name</th><th>Benchmark</th><th>TER</th><th>Holdings</th><th style="width:160px">Action</th></tr>
+							<tr>
+								<th onclick={() => toggleSort(etfSort, 'ticker')} style="cursor:pointer">Ticker{sortIndicator(etfSort, 'ticker')}</th>
+								<th onclick={() => toggleSort(etfSort, 'name')} style="cursor:pointer">Name{sortIndicator(etfSort, 'name')}</th>
+								<th onclick={() => toggleSort(etfSort, 'benchmark')} style="cursor:pointer">Benchmark{sortIndicator(etfSort, 'benchmark')}</th>
+								<th onclick={() => toggleSort(etfSort, 'ter')} style="cursor:pointer">TER{sortIndicator(etfSort, 'ter')}</th>
+								<th onclick={() => toggleSort(etfSort, 'holding_count')} style="cursor:pointer">Holdings{sortIndicator(etfSort, 'holding_count')}</th>
+								<th style="width:160px">Action</th>
+							</tr>
 						</thead>
 						<tbody>
-							{#each etfs as e}
+							{#each visibleEtfs as e}
 								<tr class:selected={selectedEtf?.ticker === e.ticker} onclick={() => showEtfDetail(e)} style="cursor:pointer">
 									<td><strong><a href="/etf/{e.ticker}" onclick={(ev) => ev.stopPropagation()} style="text-decoration:none;color:inherit">{e.ticker}</a></strong></td>
 									<td>{e.name}</td>
@@ -392,9 +592,15 @@
 
 				{#if sectors.length > 0}
 					<h3>Sector Allocation</h3>
-					<div class="sector-tags">
+					<div class="sector-chart">
 						{#each sectors as [sector, pct]}
-							<span class="sector-tag">{sector}: {formatPct(pct)}</span>
+							<div class="sector-bar-row">
+								<div class="sector-bar-label">{sector}</div>
+								<div class="sector-bar-track">
+									<div class="sector-bar-fill" style:width={(maxSectorPct ? (pct / maxSectorPct) * 100 : 0) + '%'}></div>
+								</div>
+								<div class="sector-bar-value">{formatPct(pct)}</div>
+							</div>
 						{/each}
 					</div>
 				{/if}
@@ -421,10 +627,22 @@
 
 				{#if holdingsData.consolidated_holdings?.length > 0}
 					<h3>All Consolidated Holdings ({holdingsData.consolidated_holdings.length})</h3>
+					<div class="table-toolbar">
+						<input class="filter-input" bind:value={holdingsFilter} placeholder="Filter by ticker, name or sector..." />
+						<button class="btn-secondary btn-sm" onclick={exportHoldingsCsv}>Export CSV</button>
+					</div>
 					<table class="data-table">
-						<thead><tr><th>Ticker</th><th>Name</th><th>Weight</th><th>Sector</th><th>Via</th></tr></thead>
+						<thead>
+							<tr>
+								<th onclick={() => toggleSort(holdingsSort, 'ticker')} style="cursor:pointer">Ticker{sortIndicator(holdingsSort, 'ticker')}</th>
+								<th onclick={() => toggleSort(holdingsSort, 'name')} style="cursor:pointer">Name{sortIndicator(holdingsSort, 'name')}</th>
+								<th onclick={() => toggleSort(holdingsSort, 'total_weight_pct')} style="cursor:pointer">Weight{sortIndicator(holdingsSort, 'total_weight_pct')}</th>
+								<th onclick={() => toggleSort(holdingsSort, 'sector')} style="cursor:pointer">Sector{sortIndicator(holdingsSort, 'sector')}</th>
+								<th>Via</th>
+							</tr>
+						</thead>
 						<tbody>
-							{#each holdingsData.consolidated_holdings as h}
+							{#each visibleHoldings as h}
 								<tr>
 									<td><strong>{h.ticker}</strong></td>
 									<td>{h.name}</td>
@@ -469,9 +687,12 @@
 						<div class="summary-value" style="font-size:13px">{statusMeta?.updated ?? '-'}</div>
 					</div>
 				</div>
-				<div style="margin-bottom:16px">
+				<div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
 					<button class="btn-primary" disabled={refreshing} onclick={refreshCache}>
 						{refreshing ? 'Refreshing...' : 'Invalidate Cache & Reload'}
+					</button>
+					<button class="btn-secondary" disabled={refreshingPrices} onclick={refreshPrices}>
+						{refreshingPrices ? 'Refreshing Prices...' : 'Refresh Prices'}
 					</button>
 				</div>
 				{#if statusMeta?.etfs?.length > 0}
@@ -489,6 +710,50 @@
 							{/each}
 						</tbody>
 					</table>
+				{/if}
+
+				<!-- ── Scrape status ── -->
+				{#if statusScrape?.current_run}
+					{@const run = statusScrape.current_run}
+					<h3>Current Scrape Run</h3>
+					<div class="subtitle" style="margin-bottom:8px">
+						{run.type} · started {fmtTime(run.started_at)} · {run.tickers_done}/{run.tickers_total} done
+					</div>
+					<table class="data-table">
+						<thead><tr><th>Ticker</th><th>Status</th><th>Source</th><th>Holdings</th><th>Error</th></tr></thead>
+						<tbody>
+							{#each Object.entries(run.tickers) as [ticker, t]}
+								<tr>
+									<td><strong>{ticker}</strong></td>
+									<td>{t.status}</td>
+									<td class="subtitle">{t.source ?? '-'}</td>
+									<td>{t.holdings_found ?? '-'}</td>
+									<td style="color:var(--red);font-size:11px">{t.error ?? ''}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				{/if}
+
+				{#if statusScrape?.last_runs?.length > 0}
+					<h3>Recent Scrape Runs</h3>
+					<table class="data-table">
+						<thead><tr><th>Type</th><th>Started</th><th>Finished</th><th>Succeeded</th><th>Failed</th></tr></thead>
+						<tbody>
+							{#each statusScrape.last_runs as run}
+								<tr>
+									<td>{run.type}</td>
+									<td class="subtitle">{fmtTime(run.started_at)}</td>
+									<td class="subtitle">{fmtTime(run.finished_at)}</td>
+									<td class="positive">{run.tickers_succeeded ?? '-'}</td>
+									<td class:negative={run.tickers_failed > 0}>{run.tickers_failed ?? '-'}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				{:else if !statusScrape?.current_run}
+					<h3>Scrape Runs</h3>
+					<div class="empty">No scrape runs recorded yet.</div>
 				{/if}
 			{/if}
 		</div>

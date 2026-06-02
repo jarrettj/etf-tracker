@@ -88,19 +88,29 @@ A single FastAPI module. Key design points:
 
 API surface (all under `/api`): `health`, `etf` (list), `etf/{ticker}`,
 `etf/{ticker}/raw`, `etf/status/meta`, `status/scrape`, `refresh` (POST),
-`portfolio`, `portfolio/positions` (POST / DELETE), `portfolio/rollup`.
+`refresh-prices` (POST), `portfolio`, `portfolio/positions` (POST add / PUT edit /
+DELETE), `portfolio/rollup`. `POST /api/refresh` only clears the holdings cache;
+`POST /api/refresh-prices` backdates the price cache past its fresh window so the
+next read re-fetches via yfinance (it does **not** invoke the JSE/AVMF sources the
+cron `refresh_prices.py` uses).
 
 ### Frontend (`frontend/`)
 
 - SvelteKit with `@sveltejs/adapter-static` (output dir `dist/`, SPA `fallback: index.html`).
 - **The real app is `src/routes/+page.svelte`** — a single tabbed page (Portfolio / ETFs /
-  Consolidated / Status) that imports components from `src/lib/`. Note: `src/App.svelte` and
-  `src/main.js` are leftover **stubs** and are not the entry point.
-- Uses **Svelte 5 runes** (`$state`, etc.). New reactive code should use runes, not the
-  Svelte 4 `let`-reactivity / stores style.
+  Consolidated / Status) that imports `PortfolioDetail.svelte` and `EtfDetail.svelte` from
+  `src/lib/`. The SvelteKit entry is `src/app.html` (there is no separate root component).
+- Uses **Svelte 5 runes** (`$state`, `$derived`, `$props`, `$effect`). New reactive code
+  should use runes, not the Svelte 4 `let`-reactivity / stores style.
 - `src/lib/api.js` is the single API client; `BASE = ''` means all calls are same-origin and
   rely on the Vite dev proxy (dev) or the FastAPI SPA host (prod). Add new endpoints here.
-- `src/lib/utils.js` holds shared formatters (`formatZAR`, `formatPct`) and theme helpers.
+  `get()` parses JSON; `getText()` is for text endpoints like `etf/{ticker}/raw`.
+- `src/lib/utils.js` holds shared formatters (`formatZAR`, `formatPct`), theme helpers, and
+  reusable table helpers (`sortRows`, `filterRows`, `toCsv`, `downloadCsv`) — use these for
+  any new sortable/filterable/exportable table rather than re-implementing per page.
+- Note: `npm run check` (svelte-check) reports a large number of pre-existing "implicit any" /
+  "type 'never'" diagnostics because reactive state is declared as untyped `$state(null)`.
+  This is the established style; the Vite build (`npm run build`) is the real gate and passes.
 
 ### Data refresh workflows (`scripts/`)
 
@@ -115,10 +125,14 @@ during a request:
   `ETF_SOURCES` dict in this file.
 - **`refresh_prices.py`** — writes the price cache (`~/.tradingagents/etf_prices_cache.json`).
   Intended for a **cron job**, not the server. Falls back through JSE MarketWatch → AVMF API
-  → yfinance → existing stale cache, per ticker.
-- **`scrape_status.py`** — shared helper imported by both the backend (`/api/status/scrape`)
-  and the refresh scripts. Reads/writes `data/scrape_status.json` to track current and
-  historical scrape runs (see the schema docstring at the top of the file).
+  → yfinance → existing stale cache, per ticker. Brackets each run with `scrape_status`
+  (`start_run`/`update_ticker`/`finish_run`) so progress is visible via `/api/status/scrape`.
+- **`scrape_status.py`** — shared helper imported by the backend (`/api/status/scrape`),
+  `refresh_prices.py`, and `refresh_holdings.py` (the latter records a per-ticker `done` on
+  each `--update`). All script-side calls are wrapped defensively so a status-tracking error
+  never breaks a refresh. Reads/writes `data/scrape_status.json` (a regenerable runtime
+  artifact, gitignored) to track current and historical scrape runs — see the schema docstring
+  at the top of the file.
 
 When adding or removing a tracked ETF, update the ticker tables in **all three** of
 `refresh_holdings.py` (`ETF_SOURCES`), `refresh_prices.py` (`TICKERS`), and the
