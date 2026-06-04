@@ -146,3 +146,31 @@ When adding or removing a tracked ETF, update the ticker tables in **all three**
 - ETF tickers are uppercased everywhere; `get_price` appends `.JO` to bare tickers.
 - The frontend and backend ports are pinned (8002 / 5175) across the Makefile, Vite proxy,
   and the backend CORS allow-list — change all of them together.
+
+## Deployment (Vercel)
+
+The app deploys to Vercel as a **static SvelteKit frontend + a Python serverless
+function** running the same FastAPI app. Config lives in `vercel.json`:
+
+- `installCommand` / `buildCommand` build the frontend; `outputDirectory` is
+  `frontend/dist` (served as static + SPA fallback to `index.html`).
+- `api/index.py` re-exports `server.main:app`; the `@vercel/python` runtime serves
+  the ASGI app. The rewrite `/api/(.*) → /api/index` sends all API calls to it, so
+  FastAPI's existing `/api/...` routes match unchanged. `functions.includeFiles`
+  bundles `data/**` (the read-only holdings DB) with the function.
+- The SPA-serving branch in `server/main.py` is inactive on Vercel (the function
+  bundle has no `frontend/dist/`), so the function only answers `/api/*`.
+
+**Persistence — `server/storage.py`.** Vercel's filesystem is ephemeral, so the
+mutable JSON blobs (portfolio, price cache) are stored in a **Redis-compatible KV
+store** (Vercel KV / Upstash) over its REST API (stdlib `urllib`, no extra deps).
+`storage.read_blob`/`write_blob` use KV when its env vars are present and fall back
+to the `~/.tradingagents/` files otherwise — so local dev and tests are unchanged.
+Required env vars (either naming scheme): `KV_REST_API_URL` + `KV_REST_API_TOKEN`,
+or `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`. **Add a KV/Upstash
+integration to the Vercel project before relying on portfolio persistence.**
+
+Not wired for Vercel yet: the cron refresh scripts (`refresh_prices.py`,
+`refresh_holdings.py`) and the `scrape_status` view — these still assume a
+persistent filesystem. `POST /api/refresh-prices` works (it expires the KV/file
+cache so the next read re-fetches via yfinance).

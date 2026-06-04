@@ -8,6 +8,8 @@ from pathlib import Path
 import json, os, hashlib
 from datetime import datetime, timezone
 
+from . import storage
+
 app = FastAPI(title="ETF Tracker", version="0.1.0")
 
 app.add_middleware(
@@ -91,18 +93,15 @@ _PORTFOLIO_PATH = Path.home() / ".tradingagents" / "etf_portfolio.json"
 
 
 def _load_portfolio() -> dict:
-    if not _PORTFOLIO_PATH.exists():
+    data = storage.read_blob("etf_portfolio", _PORTFOLIO_PATH)
+    if not data:
         return {"positions": [], "updated_at": None}
-    try:
-        return json.loads(_PORTFOLIO_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"positions": [], "updated_at": None}
+    return data
 
 
 def _save_portfolio(data: dict) -> None:
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    _PORTFOLIO_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PORTFOLIO_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    storage.write_blob("etf_portfolio", data, _PORTFOLIO_PATH)
 
 
 _PRICE_CACHE_PATH = Path.home() / ".tradingagents" / "etf_prices_cache.json"
@@ -113,24 +112,20 @@ _YFINANCE_TIMEOUT = 8            # seconds — yfinance must answer within this 
 
 def _load_price_cache(max_age: float | None = None) -> dict:
     import time
-    if not _PRICE_CACHE_PATH.exists():
+    data = storage.read_blob("etf_prices_cache", _PRICE_CACHE_PATH)
+    if not data:
         return {}
-    try:
-        data = json.loads(_PRICE_CACHE_PATH.read_text(encoding="utf-8"))
-        age = time.time() - data.get("_cached_at", 0)
-        if max_age is not None and age > max_age:
-            return {}
-        # Strip metadata before returning
-        return {k: v for k, v in data.items() if not k.startswith("_")}
-    except (json.JSONDecodeError, OSError):
+    age = time.time() - data.get("_cached_at", 0)
+    if max_age is not None and age > max_age:
         return {}
+    # Strip metadata before returning
+    return {k: v for k, v in data.items() if not k.startswith("_")}
 
 
 def _save_price_cache(data: dict) -> None:
     import time
     data["_cached_at"] = time.time()
-    _PRICE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _PRICE_CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    storage.write_blob("etf_prices_cache", data, _PRICE_CACHE_PATH)
 
 
 def _fetch_price_yfinance(ticker: str, yf_ticker: str) -> float | None:
@@ -237,14 +232,11 @@ def _expire_price_cache() -> bool:
     network fails. Returns False if no cache exists.
     """
     import time
-    if not _PRICE_CACHE_PATH.exists():
-        return False
-    try:
-        data = json.loads(_PRICE_CACHE_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    data = storage.read_blob("etf_prices_cache", _PRICE_CACHE_PATH)
+    if not data:
         return False
     data["_cached_at"] = time.time() - _PRICE_CACHE_TTL - 60
-    _PRICE_CACHE_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    storage.write_blob("etf_prices_cache", data, _PRICE_CACHE_PATH)
     return True
 
 

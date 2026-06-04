@@ -771,3 +771,45 @@ class TestPortfolioLifecycle:
         # 9. Verify empty
         resp = client.get("/api/portfolio")
         assert resp.json()["positions"] == []
+
+
+# ── Storage backend (file vs KV) ─────────────────────────────────────────────
+
+class TestStorage:
+    def test_file_backend_when_kv_not_configured(self, tmp_path, monkeypatch):
+        """With no KV env vars, read/write_blob use the file path."""
+        from server import storage
+        for var in ("KV_REST_API_URL", "KV_REST_API_TOKEN",
+                    "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"):
+            monkeypatch.delenv(var, raising=False)
+        assert storage.kv_configured() is False
+        fp = tmp_path / "blob.json"
+        assert storage.read_blob("k", fp) is None
+        storage.write_blob("k", {"a": 1}, fp)
+        assert fp.exists()
+        assert storage.read_blob("k", fp) == {"a": 1}
+
+    def test_kv_backend_when_configured(self, tmp_path, monkeypatch):
+        """With KV env vars set, read/write_blob use KV and never touch the file."""
+        from server import storage
+        monkeypatch.setenv("KV_REST_API_URL", "https://kv.example.com")
+        monkeypatch.setenv("KV_REST_API_TOKEN", "tok")
+        assert storage.kv_configured() is True
+
+        store = {}
+        with patch.object(storage, "_kv_set", lambda key, value: store.__setitem__(key, value)) as _s, \
+             patch.object(storage, "_kv_get", lambda key: store.get(key)):
+            fp = tmp_path / "should_not_be_written.json"
+            storage.write_blob("etf_portfolio", {"positions": []}, fp)
+            assert storage.read_blob("etf_portfolio", fp) == {"positions": []}
+            assert not fp.exists()   # KV used, file untouched
+
+    def test_kv_read_failure_returns_none(self, tmp_path, monkeypatch):
+        """A KV REST failure degrades to None rather than raising."""
+        from server import storage
+        monkeypatch.setenv("KV_REST_API_URL", "https://kv.example.com")
+        monkeypatch.setenv("KV_REST_API_TOKEN", "tok")
+        def boom(key):
+            raise RuntimeError("network down")
+        with patch.object(storage, "_kv_get", boom):
+            assert storage.read_blob("etf_portfolio", tmp_path / "x.json") is None
