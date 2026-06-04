@@ -365,32 +365,29 @@ class TestRefreshPrices:
         assert resp.json()["status"] == "ok"
 
     def test_refresh_prices_expires_cache(self, client):
-        """After refresh-prices, a previously-fresh ticker re-fetches via yfinance."""
+        """After refresh-prices, a previously-fresh ticker re-fetches from the source."""
         from server.main import _save_price_cache
         _save_price_cache({"STXNDQ": {"price": 200.0, "currency": "ZAR"}})
 
-        # Sanity: while fresh, a read does NOT hit yfinance.
-        with patch("yfinance.Ticker") as mock_ticker_cls:
+        # Sanity: while fresh, a read does NOT hit the network.
+        with patch("server.main._fetch_price") as mock_fetch:
             client.get("/api/etf/STXNDQ")
-            mock_ticker_cls.assert_not_called()
+            mock_fetch.assert_not_called()
 
         resp = client.post("/api/refresh-prices")
         assert resp.json()["status"] == "ok"
 
-        # Now the cache is stale -> the next read attempts a yfinance fetch.
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            mock_ticker = MagicMock()
-            mock_ticker.info = {"regularMarketPrice": 300.0}
-            mock_ticker_cls.return_value = mock_ticker
+        # Now the cache is stale -> the next read attempts a live fetch.
+        with patch("server.main._fetch_price", return_value=300.0) as mock_fetch:
             client.get("/api/etf/STXNDQ")
-            mock_ticker_cls.assert_called_with("STXNDQ.JO")
+            mock_fetch.assert_called_with("STXNDQ", "STXNDQ.JO")
 
     def test_refresh_prices_falls_back_to_stale_on_error(self, client):
-        """If yfinance fails after expiry, the stale cached value is still served."""
+        """If the live fetch fails after expiry, the stale cached value is still served."""
         from server.main import _save_price_cache
         _save_price_cache({"STXNDQ": {"price": 200.0, "currency": "ZAR"}})
         client.post("/api/refresh-prices")
-        with patch("yfinance.Ticker", side_effect=Exception("network")):
+        with patch("server.main._fetch_price", return_value=None):
             resp = client.get("/api/etf/STXNDQ")
             data = resp.json()
             assert data["current_price"] == 2.0      # 200 cents -> R2.00
@@ -581,18 +578,13 @@ class TestPortfolioRollup:
 # ── Price Cache ──────────────────────────────────────────────────────────────
 
 class TestPriceCache:
-    def test_price_cache_miss_fetches_from_yfinance(self, client):
-        """Test that cache miss triggers yfinance fetch.
+    def test_price_cache_miss_fetches_from_source(self, client):
+        """Test that cache miss triggers a live fetch.
 
         get_price returns a dict and, for a JSE (.JO) ticker, divides the
         cents price by 100 for display (150 cents -> R1.50).
         """
-        mock_info = {"regularMarketPrice": 150.0}
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            mock_ticker = MagicMock()
-            mock_ticker.info = mock_info
-            mock_ticker_cls.return_value = mock_ticker
-
+        with patch("server.main._fetch_price", return_value=150.0):
             from server.main import get_price
             price = get_price("STXNDQ")
             assert price["price"] == 1.5
@@ -600,56 +592,61 @@ class TestPriceCache:
             assert price["stale"] is False
 
     def test_price_cache_hit_returns_cached(self, client):
-        """Test that cache hit returns without yfinance call.
+        """Test that cache hit returns without a live fetch.
 
         Cached prices for .JO tickers are stored in cents and displayed in rand.
         """
         from server.main import _save_price_cache, get_price
         _save_price_cache({"STXNDQ": {"price": 200.0, "currency": "ZAR"}})
 
-        with patch("yfinance.Ticker") as mock_ticker_cls:
+        with patch("server.main._fetch_price") as mock_fetch:
             price = get_price("STXNDQ")
             assert price["price"] == 2.0
-            mock_ticker_cls.assert_not_called()
+            mock_fetch.assert_not_called()
 
     def test_price_jo_ticker(self, client):
         """Test that .JO tickers are used for SA ETFs."""
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            mock_ticker = MagicMock()
-            mock_ticker.info = {"regularMarketPrice": 50.0}
-            mock_ticker_cls.return_value = mock_ticker
-
+        with patch("server.main._fetch_price", return_value=50.0) as mock_fetch:
             from server.main import get_price
             get_price("STXNDQ")
-            mock_ticker_cls.assert_called_with("STXNDQ.JO")
+            mock_fetch.assert_called_with("STXNDQ", "STXNDQ.JO")
 
-    def test_price_fallback_sources(self, client):
-        """Test price fallback: regularMarketPrice → previousClose → navPrice.
+    def test_fetch_price_parses_yahoo_chart(self, client):
+        """_fetch_price reads Yahoo's chart meta, preferring regularMarketPrice
+        then previousClose, and tolerates network failures by returning None."""
+        from server import main
 
-        Bare tickers get ``.JO`` appended, so prices come back in cents and are
-        divided by 100 for display (75 cents -> R0.75).
-        """
-        from server.main import get_price
+        def _resp(meta):
+            payload = json.dumps({"chart": {"result": [{"meta": meta}]}}).encode()
 
-        # Test previousClose fallback
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            mock_ticker = MagicMock()
-            mock_ticker.info = {"previousClose": 75.0}
-            mock_ticker_cls.return_value = mock_ticker
-            price = get_price("TEST")
-            assert price["price"] == 0.75
+            class _Ctx:
+                def read(self_inner):
+                    return payload
 
-        # Test navPrice fallback
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            mock_ticker = MagicMock()
-            mock_ticker.info = {"navPrice": 60.0}
-            mock_ticker_cls.return_value = mock_ticker
-            price = get_price("TEST2")
-            assert price["price"] == 0.6
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    return False
+
+            return _Ctx()
+
+        # regularMarketPrice wins when present (cents for .JO)
+        with patch("urllib.request.urlopen", return_value=_resp(
+                {"regularMarketPrice": 9730.0, "previousClose": 9600.0})):
+            assert main._fetch_price("STXNDQ", "STXNDQ.JO") == 9730.0
+
+        # falls back to previousClose
+        with patch("urllib.request.urlopen", return_value=_resp({"previousClose": 75.0})):
+            assert main._fetch_price("TEST", "TEST.JO") == 75.0
+
+        # network error -> None
+        with patch("urllib.request.urlopen", side_effect=Exception("network")):
+            assert main._fetch_price("STXNDQ", "STXNDQ.JO") is None
 
     def test_price_returns_none_on_error(self, client):
-        """Test that price returns None when yfinance fails."""
-        with patch("yfinance.Ticker", side_effect=Exception("Network error")):
+        """Test that price returns None when the live fetch fails and no cache exists."""
+        with patch("server.main._fetch_price", return_value=None):
             from server.main import get_price
             price = get_price("STXNDQ")
             assert price is None

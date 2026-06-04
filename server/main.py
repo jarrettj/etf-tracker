@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pathlib import Path
-import json, os, hashlib
+import json, os, hashlib, urllib.request
 from datetime import datetime, timezone
 
 from . import storage
@@ -107,7 +107,7 @@ def _save_portfolio(data: dict) -> None:
 _PRICE_CACHE_PATH = Path.home() / ".tradingagents" / "etf_prices_cache.json"
 _PRICE_CACHE_TTL = 3600          # 1 hour — prices don't change minute-to-minute
 _PRICE_CACHE_STALE_TTL = 86400   # 24 hours — use stale prices rather than fail
-_YFINANCE_TIMEOUT = 8            # seconds — yfinance must answer within this window
+_PRICE_FETCH_TIMEOUT = 8         # seconds — the price fetch must answer within this window
 
 
 def _load_price_cache(max_age: float | None = None) -> dict:
@@ -128,21 +128,35 @@ def _save_price_cache(data: dict) -> None:
     storage.write_blob("etf_prices_cache", data, _PRICE_CACHE_PATH)
 
 
-def _fetch_price_yfinance(ticker: str, yf_ticker: str) -> float | None:
-    """Fetch a single price from yfinance with a hard timeout.
+def _fetch_price(ticker: str, yf_ticker: str) -> float | None:
+    """Fetch a single latest price, with a hard timeout.
 
-    Runs the blocking yfinance call in a thread and waits at most
-    _YFINANCE_TIMEOUT seconds.  Returns None on timeout or error.
+    Uses Yahoo Finance's public chart endpoint over plain HTTP (stdlib
+    ``urllib``) — the same data source the ``yfinance`` library wraps, but with
+    no pandas/numpy stack, so the serverless bundle stays small. For JSE
+    (``.JO``) tickers Yahoo returns the price in **cents**, matching the cents
+    convention the cache stores.
+
+    The blocking network call runs in a worker thread and is abandoned after
+    ``_PRICE_FETCH_TIMEOUT`` seconds, so a slow network can never hang a request.
+    Returns ``None`` on timeout or error.
     """
-    import concurrent.futures, yfinance as yf
+    import concurrent.futures
 
     def _do() -> float | None:
+        url = (
+            "https://query1.finance.yahoo.com/v8/finance/chart/"
+            f"{yf_ticker}?interval=1d&range=1d"
+        )
         try:
-            info = yf.Ticker(yf_ticker).info
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=_PRICE_FETCH_TIMEOUT) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            meta = payload["chart"]["result"][0]["meta"]
             return (
-                info.get("regularMarketPrice")
-                or info.get("previousClose")
-                or info.get("navPrice")
+                meta.get("regularMarketPrice")
+                or meta.get("previousClose")
+                or meta.get("chartPreviousClose")
             )
         except Exception:
             return None
@@ -150,8 +164,8 @@ def _fetch_price_yfinance(ticker: str, yf_ticker: str) -> float | None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(_do)
         try:
-            return future.result(timeout=_YFINANCE_TIMEOUT)
-        except (concurrent.futures.TimeoutError, Exception):
+            return future.result(timeout=_PRICE_FETCH_TIMEOUT + 1)
+        except Exception:
             return None
 
 
@@ -160,8 +174,8 @@ def get_price(ticker: str) -> dict | None:
 
     1. If a fresh cache entry exists (< ``_PRICE_CACHE_TTL``), use it.
     2. If a stale cache entry exists (< ``_PRICE_CACHE_STALE_TTL``), try to
-       refresh from yfinance but **always** fall back to the stale price.
-    3. If no cache at all, try yfinance directly; return None on failure.
+       refresh from the live source but **always** fall back to the stale price.
+    3. If no cache at all, try the live source directly; return None on failure.
     """
     import time
 
@@ -183,7 +197,7 @@ def get_price(ticker: str) -> dict | None:
     stale_price = stale_entry.get("price") if stale_entry else None
     stale_currency = stale_entry.get("currency", "ZAR") if stale_entry else "ZAR"
 
-    fetched = _fetch_price_yfinance(ticker, yf_ticker)
+    fetched = _fetch_price(ticker, yf_ticker)
 
     if fetched:
         currency = "ZAR" if ".JO" in yf_ticker else "USD"
@@ -216,7 +230,7 @@ def _price_value(p) -> float:
 def _build_price_map(tickers) -> dict:
     """Call ``get_price`` once per unique ticker for a single request.
 
-    Avoids the repeated lookups (and potential yfinance calls) that occur when
+    Avoids the repeated lookups (and potential network fetches) that occur when
     ``get_price`` is invoked multiple times per position inside ``portfolio_summary``
     and ``portfolio_rollup``.
     """
@@ -227,9 +241,9 @@ def _expire_price_cache() -> bool:
     """Force the price cache out of its 'fresh' window without deleting prices.
 
     Backdates ``_cached_at`` to just past ``_PRICE_CACHE_TTL`` (but still within
-    ``_PRICE_CACHE_STALE_TTL``) so the next ``get_price`` re-fetches from
-    yfinance, yet the cached values remain available as a stale fallback if the
-    network fails. Returns False if no cache exists.
+    ``_PRICE_CACHE_STALE_TTL``) so the next ``get_price`` re-fetches from the
+    live source, yet the cached values remain available as a stale fallback if
+    the network fails. Returns False if no cache exists.
     """
     import time
     data = storage.read_blob("etf_prices_cache", _PRICE_CACHE_PATH)
@@ -327,7 +341,7 @@ async def refresh_prices():
 
     The server stays a reader: this only marks the cache stale (sets
     ``_cached_at`` to 0), so the next ``get_price`` per ticker falls through to
-    yfinance, with the existing cached values as a fallback. It does **not**
+    the live Yahoo source, with the existing cached values as a fallback. It does **not**
     invoke the richer JSE/AVMF sources used by ``scripts/refresh_prices.py``
     (cron); those remain out-of-band.
     """

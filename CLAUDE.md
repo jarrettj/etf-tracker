@@ -42,7 +42,8 @@ make test-smoke                            # smoke tests against a LIVE server o
 
 - `tests/test_api.py` uses FastAPI's `TestClient` and patches module-level paths
   (`server.main._HOLDINGS_DB_PATH`, `_PORTFOLIO_PATH`, `_PRICE_CACHE_PATH`) onto
-  `tmp_path` fixtures — it never touches real data or the network. yfinance is mocked.
+  `tmp_path` fixtures — it never touches real data or the network. The live price fetch
+  (`server.main._fetch_price`) is mocked.
 - `tests/test_smoke.py` requires a running server (start it with `make start` first).
 - `requirements-dev.txt` (pytest, httpx) is installed automatically by `make test-backend`.
 
@@ -69,10 +70,13 @@ A single FastAPI module. Key design points:
   ETF tickers and metadata coexist in the same JSON object. Per-ETF metadata uses the same
   convention.
 - **Prices** come from `~/.tradingagents/etf_prices_cache.json` (outside the repo). The
-  server is a **reader with fallback**: fresh cache (<1h) → try yfinance with an 8s hard
-  timeout → stale cache (<24h, returned with `"stale": true`) → `None`. yfinance is called
-  in a thread pool so a slow network can never hang a request beyond the timeout.
-- **Currency / cents convention**: JSE tickers are queried from yfinance as `TICKER.JO`
+  server is a **reader with fallback**: fresh cache (<1h) → try a live fetch with an 8s hard
+  timeout → stale cache (<24h, returned with `"stale": true`) → `None`. The live fetch
+  (`_fetch_price`) hits Yahoo's public `v8/finance/chart` endpoint directly over stdlib
+  `urllib` — the same data source `yfinance` wraps, but with **no** pandas/numpy dependency,
+  so the Vercel serverless bundle stays small. It runs in a thread pool so a slow network
+  can never hang a request beyond the timeout.
+- **Currency / cents convention**: JSE tickers are queried from Yahoo as `TICKER.JO`
   and their prices come back in **cents**. The cache always stores cents for `.JO` tickers;
   prices are divided by 100 (`p / 100.0`) only at display time. Currency is `ZAR` for `.JO`,
   `USD` otherwise.
@@ -91,7 +95,7 @@ API surface (all under `/api`): `health`, `etf` (list), `etf/{ticker}`,
 `refresh-prices` (POST), `portfolio`, `portfolio/positions` (POST add / PUT edit /
 DELETE), `portfolio/rollup`. `POST /api/refresh` only clears the holdings cache;
 `POST /api/refresh-prices` backdates the price cache past its fresh window so the
-next read re-fetches via yfinance (it does **not** invoke the JSE/AVMF sources the
+next read re-fetches from the live Yahoo source (it does **not** invoke the JSE/AVMF sources the
 cron `refresh_prices.py` uses).
 
 ### Frontend (`frontend/`)
@@ -170,7 +174,15 @@ Required env vars (either naming scheme): `KV_REST_API_URL` + `KV_REST_API_TOKEN
 or `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`. **Add a KV/Upstash
 integration to the Vercel project before relying on portfolio persistence.**
 
+The **live price fetch** (`_fetch_price`) calls Yahoo's `v8/finance/chart` endpoint
+over stdlib `urllib` — no `yfinance`/pandas/numpy, so the function bundle is small.
+Caveat: Yahoo may rate-limit or block requests from datacenter IPs; when a live fetch
+fails the server falls back to the (KV-stored) stale cache, so the durable way to keep
+prices fresh on Vercel is to **populate the KV price cache out-of-band** (e.g. a Vercel
+Cron Job hitting `POST /api/refresh-prices`, or porting `scripts/refresh_prices.py` to
+write to KV) rather than relying on per-request live fetches.
+
 Not wired for Vercel yet: the cron refresh scripts (`refresh_prices.py`,
 `refresh_holdings.py`) and the `scrape_status` view — these still assume a
 persistent filesystem. `POST /api/refresh-prices` works (it expires the KV/file
-cache so the next read re-fetches via yfinance).
+cache so the next read re-fetches from the live source).

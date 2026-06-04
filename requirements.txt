@@ -1,3 +1,8 @@
 fastapi==0.115.*
 uvicorn==0.34.*
-yfinance==0.2.55
+
+# The live price path uses Yahoo's HTTP chart endpoint via stdlib urllib (see
+# server/main.py:_fetch_price), so yfinance is intentionally NOT a dependency —
+# it would pull pandas/numpy and bloat the Vercel serverless bundle. The cron
+# script scripts/refresh_prices.py can still use yfinance as a fallback if it is
+# installed separately.
