@@ -241,9 +241,99 @@ html {
 	background: var(--red-bg);
 }
 
+.btn-secondary {
+	padding: 6px 14px;
+	border-radius: 6px;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.15s;
+	background: transparent;
+	color: var(--accent);
+	border: 1px solid var(--accent);
+}
+
+.btn-secondary:hover:not(:disabled) {
+	background: var(--accent);
+	color: #fff;
+}
+
+.btn-secondary:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
 .btn-sm {
 	padding: 4px 10px;
 	font-size: 11px;
+}
+
+/* ── Table toolbar (filter + export) ───────────────────────────────── */
+.table-toolbar {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 12px;
+	flex-wrap: wrap;
+}
+
+.filter-input {
+	padding: 6px 10px;
+	background: var(--bg-input);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	color: var(--text-primary);
+	font-size: 13px;
+	outline: none;
+	min-width: 240px;
+	transition: border-color 0.15s;
+}
+
+.filter-input:focus {
+	border-color: var(--accent);
+}
+
+/* ── Sector allocation bar chart ───────────────────────────────────── */
+.sector-chart {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 16px;
+}
+
+.sector-bar-row {
+	display: grid;
+	grid-template-columns: 200px 1fr 64px;
+	gap: 12px;
+	align-items: center;
+}
+
+.sector-bar-label {
+	font-size: 12px;
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sector-bar-track {
+	background: var(--bg-input);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	height: 16px;
+	overflow: hidden;
+}
+
+.sector-bar-fill {
+	height: 100%;
+	background: var(--accent);
+	border-radius: 3px 0 0 3px;
+	transition: width 0.2s;
+}
+
+.sector-bar-value {
+	font-size: 12px;
+	text-align: right;
 }
 
 /* ── Forms ─────────────────────────────────────────────────────────── */

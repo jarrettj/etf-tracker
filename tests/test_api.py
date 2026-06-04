@@ -302,6 +302,155 @@ class TestPortfolioRemove:
         assert resp.status_code == 200
 
 
+# ── Portfolio: Edit Position (PUT) ───────────────────────────────────────────
+
+class TestPortfolioEdit:
+    def _add(self, client, shares=100, cost=50.0):
+        client.post("/api/portfolio/positions", json={
+            "etf_ticker": "STXNDQ",
+            "shares": shares,
+            "cost_basis_per_share": cost,
+        })
+
+    def test_edit_replaces_values(self, client):
+        """PUT overwrites shares + cost (replace semantics, not averaging)."""
+        self._add(client, shares=100, cost=50.0)
+        resp = client.put("/api/portfolio/positions/STXNDQ", json={
+            "shares": 25,
+            "cost_basis_per_share": 80.0,
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["shares"] == 25
+        assert body["cost_basis_per_share"] == 80.0
+
+    def test_edit_persists(self, client):
+        self._add(client, shares=100, cost=50.0)
+        client.put("/api/portfolio/positions/STXNDQ", json={
+            "shares": 25, "cost_basis_per_share": 80.0,
+        })
+        resp = client.get("/api/portfolio")
+        pos = next(p for p in resp.json()["positions"] if p["etf_ticker"] == "STXNDQ")
+        assert pos["shares"] == 25
+        assert pos["cost_basis_per_share"] == 80.0
+
+    def test_edit_case_insensitive(self, client):
+        self._add(client)
+        resp = client.put("/api/portfolio/positions/stxndq", json={
+            "shares": 10, "cost_basis_per_share": 5.0,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["shares"] == 10
+
+    def test_edit_nonexistent_returns_404(self, client):
+        resp = client.put("/api/portfolio/positions/XXXX", json={
+            "shares": 10, "cost_basis_per_share": 5.0,
+        })
+        assert resp.status_code == 404
+
+    def test_edit_invalid_shares_returns_422(self, client):
+        self._add(client)
+        resp = client.put("/api/portfolio/positions/STXNDQ", json={
+            "shares": 0, "cost_basis_per_share": 5.0,
+        })
+        assert resp.status_code == 422
+
+
+# ── Refresh Prices ───────────────────────────────────────────────────────────
+
+class TestRefreshPrices:
+    def test_refresh_prices_no_cache(self, client):
+        resp = client.post("/api/refresh-prices")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_refresh_prices_expires_cache(self, client):
+        """After refresh-prices, a previously-fresh ticker re-fetches via yfinance."""
+        from server.main import _save_price_cache
+        _save_price_cache({"STXNDQ": {"price": 200.0, "currency": "ZAR"}})
+
+        # Sanity: while fresh, a read does NOT hit yfinance.
+        with patch("yfinance.Ticker") as mock_ticker_cls:
+            client.get("/api/etf/STXNDQ")
+            mock_ticker_cls.assert_not_called()
+
+        resp = client.post("/api/refresh-prices")
+        assert resp.json()["status"] == "ok"
+
+        # Now the cache is stale -> the next read attempts a yfinance fetch.
+        with patch("yfinance.Ticker") as mock_ticker_cls:
+            mock_ticker = MagicMock()
+            mock_ticker.info = {"regularMarketPrice": 300.0}
+            mock_ticker_cls.return_value = mock_ticker
+            client.get("/api/etf/STXNDQ")
+            mock_ticker_cls.assert_called_with("STXNDQ.JO")
+
+    def test_refresh_prices_falls_back_to_stale_on_error(self, client):
+        """If yfinance fails after expiry, the stale cached value is still served."""
+        from server.main import _save_price_cache
+        _save_price_cache({"STXNDQ": {"price": 200.0, "currency": "ZAR"}})
+        client.post("/api/refresh-prices")
+        with patch("yfinance.Ticker", side_effect=Exception("network")):
+            resp = client.get("/api/etf/STXNDQ")
+            data = resp.json()
+            assert data["current_price"] == 2.0      # 200 cents -> R2.00
+            assert data["price_stale"] is True
+
+
+# ── Price memoization ────────────────────────────────────────────────────────
+
+class TestPriceMemoization:
+    def test_rollup_calls_get_price_once_per_ticker(self, client):
+        """portfolio_rollup must not call get_price more than once per unique ticker."""
+        client.post("/api/portfolio/positions", json={
+            "etf_ticker": "STXNDQ", "shares": 10, "cost_basis_per_share": 50.0,
+        })
+        client.post("/api/portfolio/positions", json={
+            "etf_ticker": "SYGUS", "shares": 10, "cost_basis_per_share": 40.0,
+        })
+        with patch("server.main.get_price", return_value=100.0) as mock_gp:
+            client.get("/api/portfolio/rollup")
+        called = {c.args[0] for c in mock_gp.call_args_list}
+        assert called == {"STXNDQ", "SYGUS"}
+        assert mock_gp.call_count == 2
+
+    def test_summary_calls_get_price_once_per_ticker(self, client):
+        client.post("/api/portfolio/positions", json={
+            "etf_ticker": "STXNDQ", "shares": 10, "cost_basis_per_share": 50.0,
+        })
+        with patch("server.main.get_price", return_value=100.0) as mock_gp:
+            client.get("/api/portfolio")
+        assert mock_gp.call_count == 1
+
+
+# ── Scrape Status ────────────────────────────────────────────────────────────
+
+class TestScrapeStatus:
+    def test_scrape_status_empty(self, client):
+        resp = client.get("/api/status/scrape")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "current_run" in data
+        assert "last_runs" in data
+
+    def test_scrape_status_reflects_written_run(self, client, tmp_path, monkeypatch):
+        """A run written via scrape_status is surfaced by /api/status/scrape."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+        import scrape_status
+        monkeypatch.setattr(scrape_status, "SCRAPE_STATUS_PATH", tmp_path / "scrape_status.json")
+        scrape_status.start_run("prices", ["STXNDQ", "STXESG"])
+        scrape_status.update_ticker("STXNDQ", "done", source="yfinance")
+        scrape_status.finish_run()
+
+        resp = client.get("/api/status/scrape")
+        data = resp.json()
+        assert data["current_run"] is None
+        assert len(data["last_runs"]) >= 1
+        assert data["last_runs"][0]["type"] == "prices"
+        assert data["last_runs"][0]["tickers"]["STXNDQ"]["status"] == "done"
+
+
 # ── Portfolio: Summary Calculations ──────────────────────────────────────────
 
 class TestPortfolioSummary:
@@ -433,7 +582,11 @@ class TestPortfolioRollup:
 
 class TestPriceCache:
     def test_price_cache_miss_fetches_from_yfinance(self, client):
-        """Test that cache miss triggers yfinance fetch."""
+        """Test that cache miss triggers yfinance fetch.
+
+        get_price returns a dict and, for a JSE (.JO) ticker, divides the
+        cents price by 100 for display (150 cents -> R1.50).
+        """
         mock_info = {"regularMarketPrice": 150.0}
         with patch("yfinance.Ticker") as mock_ticker_cls:
             mock_ticker = MagicMock()
@@ -442,16 +595,21 @@ class TestPriceCache:
 
             from server.main import get_price
             price = get_price("STXNDQ")
-            assert price == 150.0
+            assert price["price"] == 1.5
+            assert price["currency"] == "ZAR"
+            assert price["stale"] is False
 
     def test_price_cache_hit_returns_cached(self, client):
-        """Test that cache hit returns without yfinance call."""
+        """Test that cache hit returns without yfinance call.
+
+        Cached prices for .JO tickers are stored in cents and displayed in rand.
+        """
         from server.main import _save_price_cache, get_price
-        _save_price_cache({"STXNDQ": {"price": 200.0, "currency": "ZAR", "_cached_at": 9999999999}})
+        _save_price_cache({"STXNDQ": {"price": 200.0, "currency": "ZAR"}})
 
         with patch("yfinance.Ticker") as mock_ticker_cls:
             price = get_price("STXNDQ")
-            assert price == 200.0
+            assert price["price"] == 2.0
             mock_ticker_cls.assert_not_called()
 
     def test_price_jo_ticker(self, client):
@@ -466,7 +624,11 @@ class TestPriceCache:
             mock_ticker_cls.assert_called_with("STXNDQ.JO")
 
     def test_price_fallback_sources(self, client):
-        """Test price fallback: regularMarketPrice → previousClose → navPrice."""
+        """Test price fallback: regularMarketPrice → previousClose → navPrice.
+
+        Bare tickers get ``.JO`` appended, so prices come back in cents and are
+        divided by 100 for display (75 cents -> R0.75).
+        """
         from server.main import get_price
 
         # Test previousClose fallback
@@ -475,7 +637,7 @@ class TestPriceCache:
             mock_ticker.info = {"previousClose": 75.0}
             mock_ticker_cls.return_value = mock_ticker
             price = get_price("TEST")
-            assert price == 75.0
+            assert price["price"] == 0.75
 
         # Test navPrice fallback
         with patch("yfinance.Ticker") as mock_ticker_cls:
@@ -483,7 +645,7 @@ class TestPriceCache:
             mock_ticker.info = {"navPrice": 60.0}
             mock_ticker_cls.return_value = mock_ticker
             price = get_price("TEST2")
-            assert price == 60.0
+            assert price["price"] == 0.6
 
     def test_price_returns_none_on_error(self, client):
         """Test that price returns None when yfinance fails."""
